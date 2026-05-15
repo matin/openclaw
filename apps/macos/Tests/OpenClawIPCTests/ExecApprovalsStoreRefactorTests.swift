@@ -36,6 +36,40 @@ struct ExecApprovalsStoreRefactorTests {
     }
 
     @Test
+    func `ensure state imports legacy json approvals before sqlite defaults`() async throws {
+        try await self.withTempStateDir { stateDir in
+            try FileManager().createDirectory(at: stateDir, withIntermediateDirectories: true)
+            let legacyURL = stateDir.appendingPathComponent("exec-approvals.json")
+            try """
+                {
+                  "version": 1,
+                  "socket": { "path": "/tmp/legacy.sock", "token": "legacy-token" },
+                  "defaults": { "security": "allowlist", "ask": "on-miss" },
+                  "agents": {
+                    "main": {
+                      "allowlist": [
+                        { "id": "00000000-0000-0000-0000-000000000001", "pattern": "/usr/bin/rg" }
+                      ]
+                    }
+                  }
+                }
+
+                """.write(to: legacyURL, atomically: true, encoding: .utf8)
+
+            let ensured = ExecApprovalsStore.ensureState()
+
+            #expect(ensured.socket?.path == "/tmp/legacy.sock")
+            #expect(ensured.socket?.token == "legacy-token")
+            #expect(ensured.defaults?.security == .allowlist)
+            #expect(ensured.defaults?.ask == .onMiss)
+            #expect(ensured.agents?["main"]?.allowlist?.map(\.pattern) == ["/usr/bin/rg"])
+            #expect(!FileManager().fileExists(atPath: legacyURL.path))
+            let storedRaw = try Self.readStoredApprovalsRaw()
+            #expect(storedRaw?.contains("legacy-token") == true)
+        }
+    }
+
+    @Test
     func `update allowlist accepts basename pattern`() async throws {
         try await self.withTempStateDir { _ in
             let rejected = ExecApprovalsStore.updateAllowlist(

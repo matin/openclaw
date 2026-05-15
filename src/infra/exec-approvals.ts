@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
 import type { Insertable } from "kysely";
 import { DEFAULT_AGENT_ID } from "../routing/session-key.js";
 import {
@@ -218,6 +219,7 @@ const DEFAULT_ASK: ExecAsk = "off";
 export const DEFAULT_EXEC_APPROVAL_ASK_FALLBACK: ExecSecurity = "full";
 const DEFAULT_AUTO_ALLOW_SKILLS = false;
 const DEFAULT_SOCKET = "~/.openclaw/exec-approvals.sock";
+const LEGACY_EXEC_APPROVALS_FILE = "~/.openclaw/exec-approvals.json";
 const EXEC_APPROVALS_CONFIG_KEY = "current";
 
 type ExecApprovalsDatabase = Pick<OpenClawStateKyselyDatabase, "exec_approvals_config">;
@@ -467,6 +469,36 @@ function readExecApprovalsRawFromSqlite(env: NodeJS.ProcessEnv = process.env): s
   return row?.raw_json ?? null;
 }
 
+function readLegacyExecApprovalsRaw(env: NodeJS.ProcessEnv = process.env): {
+  raw: string | null;
+  exists: boolean;
+  path: string;
+} {
+  const filePath = resolveLegacyExecApprovalsPath(env);
+  if (!fs.existsSync(filePath)) {
+    return { raw: null, exists: false, path: filePath };
+  }
+  return { raw: fs.readFileSync(filePath, "utf8"), exists: true, path: filePath };
+}
+
+function resolveLegacyExecApprovalsPath(env: NodeJS.ProcessEnv = process.env): string {
+  return expandHomePrefix(LEGACY_EXEC_APPROVALS_FILE, { env });
+}
+
+function readExecApprovalsRaw(env: NodeJS.ProcessEnv = process.env): string | null {
+  const sqliteRaw = readExecApprovalsRawFromSqlite(env);
+  if (sqliteRaw !== null) {
+    return sqliteRaw;
+  }
+  const legacy = readLegacyExecApprovalsRaw(env);
+  if (!legacy.exists || legacy.raw === null) {
+    return null;
+  }
+  writeExecApprovalsRawToSqlite(legacy.raw, env);
+  fs.rmSync(legacy.path, { force: true });
+  return legacy.raw;
+}
+
 export function writeExecApprovalsRawToSqlite(
   raw: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -523,7 +555,7 @@ function parseExecApprovalsRaw(raw: string | null): ExecApprovalsFile {
 }
 
 export function readExecApprovalsSnapshot(): ExecApprovalsSnapshot {
-  const sqliteRaw = readExecApprovalsRawFromSqlite();
+  const sqliteRaw = readExecApprovalsRaw();
   return {
     path: resolveExecApprovalsStoreLocationForDisplay(),
     exists: sqliteRaw !== null,
@@ -534,7 +566,7 @@ export function readExecApprovalsSnapshot(): ExecApprovalsSnapshot {
 }
 
 export function loadExecApprovals(): ExecApprovalsFile {
-  return parseExecApprovalsRaw(readExecApprovalsRawFromSqlite());
+  return parseExecApprovalsRaw(readExecApprovalsRaw());
 }
 
 export function saveExecApprovals(file: ExecApprovalsFile) {

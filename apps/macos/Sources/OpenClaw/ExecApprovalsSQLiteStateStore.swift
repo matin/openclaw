@@ -13,7 +13,19 @@ enum ExecApprovalsSQLiteStateStore {
     }
 
     static func readRawState() -> String? {
-        OpenClawSQLiteStateStore.readExecApprovalsRaw(configKey: self.configKey)
+        if let raw = OpenClawSQLiteStateStore.readExecApprovalsRaw(configKey: self.configKey) {
+            return raw
+        }
+        guard let raw = try? String(contentsOf: self.legacyURL(), encoding: .utf8) else {
+            return nil
+        }
+        do {
+            try self.writeRawState(raw)
+            try? FileManager.default.removeItem(at: self.legacyURL())
+        } catch {
+            return raw
+        }
+        return raw
     }
 
     static func writeRawState(_ raw: String) throws {
@@ -42,5 +54,9 @@ enum ExecApprovalsSQLiteStateStore {
             return ExecApprovalsFile(version: 1, socket: nil, defaults: nil, agents: nil)
         }
         return file
+    }
+
+    private static func legacyURL() -> URL {
+        OpenClawPaths.stateDirURL.appendingPathComponent("exec-approvals.json", isDirectory: false)
     }
 }

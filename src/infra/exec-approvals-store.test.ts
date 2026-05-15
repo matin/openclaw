@@ -196,6 +196,33 @@ describe("exec approvals store helpers", () => {
     expect(readApprovalsFile().socket).toEqual(ensured.socket);
   });
 
+  it("imports legacy JSON approvals before creating SQLite defaults", () => {
+    const dir = createHomeDir();
+    const legacyPath = path.join(dir, ".openclaw", "exec-approvals.json");
+    fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
+    fs.writeFileSync(
+      legacyPath,
+      JSON.stringify(
+        {
+          version: 1,
+          socket: { path: "/tmp/legacy.sock", token: "legacy-token" },
+          defaults: { security: "allowlist", ask: "on-miss" },
+          agents: { main: { allowlist: [{ pattern: "/usr/bin/rg", id: "keep-id" }] } },
+        } satisfies ExecApprovalsFile,
+        null,
+        2,
+      ) + "\n",
+    );
+
+    const ensured = ensureExecApprovals();
+
+    expect(ensured.socket).toEqual({ path: "/tmp/legacy.sock", token: "legacy-token" });
+    expect(ensured.defaults).toEqual({ security: "allowlist", ask: "on-miss" });
+    expect(ensured.agents?.main?.allowlist).toEqual([{ pattern: "/usr/bin/rg", id: "keep-id" }]);
+    expect(fs.existsSync(legacyPath)).toBe(false);
+    expect(readSqliteRaw()).toContain("legacy-token");
+  });
+
   it("adds trimmed allowlist entries once and persists generated ids", () => {
     createHomeDir();
     vi.spyOn(Date, "now").mockReturnValue(123_456);
