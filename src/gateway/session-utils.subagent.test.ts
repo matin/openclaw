@@ -1177,6 +1177,34 @@ describe("loadCombinedSessionEntriesForGateway includes SQLite-registered agents
     });
   });
 
+  test("configured-only loads preserve registered database paths", async () => {
+    await withStateDirEnv("openclaw-acp-configured-registered-path-", async ({ tempRoot }) => {
+      const databasePath = path.join(tempRoot, "relocated", "work.sqlite");
+      openOpenClawAgentDatabase({ agentId: "work", path: databasePath });
+      upsertSessionEntry({
+        agentId: "work",
+        path: databasePath,
+        sessionKey: "agent:work:task",
+        entry: { sessionId: "s-work", updatedAt: 400 },
+      });
+
+      const cfg = {
+        session: {
+          mainKey: "main",
+        },
+        agents: {
+          list: [{ id: "main", default: true }, { id: "work" }],
+        },
+      } as OpenClawConfig;
+
+      const { entries } = loadCombinedSessionEntriesForGateway(cfg, {
+        configuredAgentsOnly: true,
+      });
+
+      expect(entries["agent:work:task"]?.sessionId).toBe("s-work");
+    });
+  });
+
   test("keeps canonical single-target entries intact", async () => {
     await withStateDirEnv("openclaw-acp-canonical-", async () => {
       upsertSessionEntry({

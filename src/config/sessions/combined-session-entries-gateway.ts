@@ -3,7 +3,6 @@ import {
   resolveStoredSessionRowKeyForAgent,
 } from "../../gateway/session-row-key.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
-import { resolveOpenClawAgentSqlitePath } from "../../state/openclaw-agent-db.js";
 import type { OpenClawConfig } from "../types.openclaw.js";
 import { listSessionEntries } from "./store.js";
 import {
@@ -67,13 +66,9 @@ export function loadCombinedSessionEntriesForGateway(
   const targets = requestedAgentId
     ? resolveAgentSessionDatabaseTargetsSync(cfg, requestedAgentId)
     : opts.configuredAgentsOnly === true
-      ? listConfiguredSessionStoreAgentIds(cfg).map((agentId) => {
-          const normalizedAgentId = normalizeAgentId(agentId);
-          return {
-            agentId: normalizedAgentId,
-            databasePath: resolveOpenClawAgentSqlitePath({ agentId: normalizedAgentId }),
-          };
-        })
+      ? listConfiguredSessionStoreAgentIds(cfg).flatMap((agentId) =>
+          resolveAgentSessionDatabaseTargetsSync(cfg, normalizeAgentId(agentId)),
+        )
       : resolveAllAgentSessionDatabaseTargetsSync(cfg);
   const combined: Record<string, SessionEntry> = {};
   for (const target of targets) {

@@ -156,8 +156,8 @@ export function resolveSessionDatabaseTargets(
         `Unknown agent id "${opts.agent}". Use "openclaw agents list" to see configured agents.`,
       );
     }
-    return [resolveSessionDatabaseTarget({ agentId: requested, env })];
+    return resolveAgentSessionDatabaseTargetsSync(cfg, requested, { env });
   }
 
-  return [resolveSessionDatabaseTarget({ agentId: defaultAgentId, env })];
+  return resolveAgentSessionDatabaseTargetsSync(cfg, defaultAgentId, { env });
 }

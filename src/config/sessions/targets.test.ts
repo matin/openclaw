@@ -120,6 +120,24 @@ describe("resolveSessionDatabaseTargets", () => {
     ]);
   });
 
+  it("includes SQLite-registered paths for explicit configured agent selection", async () => {
+    await withTempStateHome(async (home) => {
+      const env = createEnv(home);
+      const cfg: OpenClawConfig = {
+        agents: {
+          list: [{ id: "main", default: true }, { id: "work" }],
+        },
+      };
+      const databasePath = path.join(home, "relocated", "work.sqlite");
+      openOpenClawAgentDatabase({ agentId: "work", env, path: databasePath });
+
+      expect(resolveSessionDatabaseTargets(cfg, { agent: "work" }, { env })).toEqual([
+        expectedTarget({ agentId: "work", env }),
+        expectedTarget({ agentId: "work", env, databasePath }),
+      ]);
+    });
+  });
+
   it("rejects unknown explicit agent ids", () => {
     const cfg: OpenClawConfig = {
       agents: {
