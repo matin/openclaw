@@ -199,7 +199,7 @@ without exceptions outside doctor/import/export/debug boundaries.
 No follow-up product decisions are blocking this plan. The implementation should
 proceed with these assumptions:
 
-- Use `node:sqlite` directly and require the Node 24+ runtime for this storage
+- Use `node:sqlite` directly and require the Node 22+ runtime for this storage
   path.
 - Keep exactly one normal configuration file. Do not move config, plugin
   manifests, or Git workspaces into SQLite in this refactor.
@@ -281,7 +281,7 @@ No additional product questions are blocking implementation.
 
 The branch already has a real shared SQLite base:
 
-- The runtime floor is now Node 24+: `package.json`, the CLI runtime guard,
+- The runtime floor is now Node 22+: `package.json`, the CLI runtime guard,
   installer defaults, macOS runtime locator, CI, and public install docs all
   agree. The old Node 22 compatibility lane is removed.
 - `src/state/openclaw-state-db.ts` opens `openclaw.sqlite`, sets WAL,

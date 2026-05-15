@@ -7,7 +7,7 @@ read_when:
   - "npm install -g fails with permissions or PATH issues"
 ---
 
-OpenClaw requires **Node 24 or newer**. Node 24 is the default runtime for installs, CI, release workflows, and the SQLite-backed state layer. The [installer script](/install#alternative-install-methods) will detect and install Node automatically - this page is for when you want to set up Node yourself and make sure everything is wired up correctly (versions, PATH, global installs).
+OpenClaw requires **Node 22.16 or newer**. **Node 24 is the default and recommended runtime** for installs, CI, release workflows, and the SQLite-backed state layer. The [installer script](/install#alternative-install-methods) will detect and install Node automatically - this page is for when you want to set up Node yourself and make sure everything is wired up correctly (versions, PATH, global installs).
 
 ## Check your version
 

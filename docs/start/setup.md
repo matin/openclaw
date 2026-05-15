@@ -21,7 +21,7 @@ Pick a setup workflow based on how often you want updates and whether you want t
 
 ## Prereqs (from source)
 
-- Node 24 or newer
+- Node 24 (recommended), or Node 22 LTS (22.16+) for compatibility
 - `pnpm` required for source checkouts. OpenClaw loads bundled plugins from the
   `extensions/*` pnpm workspace packages in dev mode, so root `npm install` does
   not prepare the full source tree.

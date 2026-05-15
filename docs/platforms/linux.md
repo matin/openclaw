@@ -14,7 +14,7 @@ Native Linux companion apps are planned. Contributions are welcome if you want t
 
 ## Beginner quick path (VPS)
 
-1. Install Node 24 or newer
+1. Install Node 24 (recommended), or Node 22 LTS (22.16+) for compatibility
 2. `npm i -g openclaw@latest`
 3. `openclaw onboard --install-daemon`
 4. From your laptop: `ssh -N -L 18789:127.0.0.1:18789 <user>@<host>`

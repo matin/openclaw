@@ -31,7 +31,7 @@ ensure_home_env
 
 PREFIX="${OPENCLAW_PREFIX:-${HOME}/.openclaw}"
 OPENCLAW_VERSION="${OPENCLAW_VERSION:-latest}"
-NODE_VERSION="${OPENCLAW_NODE_VERSION:-24.12.0}"
+NODE_VERSION="${OPENCLAW_NODE_VERSION:-22.22.0}"
 SHARP_IGNORE_GLOBAL_LIBVIPS="${SHARP_IGNORE_GLOBAL_LIBVIPS:-1}"
 NPM_LOGLEVEL="${OPENCLAW_NPM_LOGLEVEL:-error}"
 INSTALL_METHOD="${OPENCLAW_INSTALL_METHOD:-npm}"
@@ -52,7 +52,7 @@ Usage: install-cli.sh [options]
   --git, --github                     Shortcut for --install-method git
   --git-dir, --dir <path>             Checkout directory (default: ~/openclaw)
   --version <ver>                     OpenClaw version (default: latest)
-  --node-version <ver>                Node version (default: 24.12.0)
+  --node-version <ver>                Node version (default: 22.22.0)
   --onboard                           Run "openclaw onboard" after install
   --no-onboard                        Skip onboarding (default)
   --set-npm-prefix                    Force npm prefix to ~/.npm-global if current prefix is not writable (Linux)
@@ -302,6 +302,21 @@ node_bin() {
   echo "$(node_dir)/bin/node"
 }
 
+npm_node_version_is_supported() {
+  local raw="$1"
+  local version
+  local major
+  local minor
+
+  version="${raw#v}"
+  major="${version%%.*}"
+  minor="${version#*.}"
+  minor="${minor%%.*}"
+  [[ "$major" =~ ^[0-9]+$ ]] || return 1
+  [[ "$minor" =~ ^[0-9]+$ ]] || minor=0
+  [[ "$major" -gt 22 ]] || { [[ "$major" -eq 22 ]] && [[ "$minor" -ge 16 ]]; }
+}
+
 npm_bin() {
   echo "$(node_dir)/bin/npm"
 }
@@ -538,11 +553,15 @@ install_node() {
   dir="$(node_dir)"
 
   if [[ -x "$(node_bin)" ]]; then
-    current_major="$("$(node_bin)" -v 2>/dev/null | tr -d 'v' | cut -d'.' -f1 || echo "")"
-    if [[ -n "$current_major" && "$current_major" -ge 22 ]]; then
+    current_major="$("$(node_bin)" -v 2>/dev/null || echo "")"
+    if npm_node_version_is_supported "$current_major"; then
       emit_json "{\"event\":\"step\",\"name\":\"node\",\"status\":\"skip\",\"path\":\"${dir//\"/\\\\\\\"}\"}"
       return
     fi
+  fi
+
+  if ! npm_node_version_is_supported "$NODE_VERSION"; then
+    fail "OpenClaw requires Node 22.16.0 or newer; got --node-version ${NODE_VERSION}"
   fi
 
   emit_json "{\"event\":\"step\",\"name\":\"node\",\"status\":\"start\",\"version\":\"${NODE_VERSION}\"}"
@@ -576,8 +595,11 @@ install_node() {
 
   ln -sfn "$dir" "${PREFIX}/tools/node"
 
+  if ! npm_node_version_is_supported "$("$(node_bin)" -v 2>/dev/null || echo "")"; then
+    fail "Installed Node ${NODE_VERSION} is below the required 22.16.0 minimum"
+  fi
   if ! "$(node_bin)" -e "require('node:sqlite')" >/dev/null 2>&1; then
-    fail "Installed Node ${NODE_VERSION} is missing node:sqlite; re-run with --node-version 24.0.0 (or newer)"
+    fail "Installed Node ${NODE_VERSION} is missing node:sqlite; re-run with --node-version 22.22.0 (or newer)"
   fi
   emit_json "{\"event\":\"step\",\"name\":\"node\",\"status\":\"ok\",\"version\":\"${NODE_VERSION}\"}"
 }

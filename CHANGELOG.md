@@ -1192,7 +1192,7 @@ Docs: https://docs.openclaw.ai
 - Subagents/maintenance: preserve pending subagent registry sessions during session-store cleanup, pruning, and disk-budget enforcement so in-flight subagent runs are not deleted by background maintenance before they complete. (#81498) Thanks @ai-hpc.
 - Control UI/chat: reconcile terminal and reconnect run cleanup with cached session activity, stale compaction/fallback indicators, and a compact composer run-status chip so completed or interrupted turns do not leave Stop active. Fixes #76874 and #64220; refs #71630. Thanks @BunsDev.
 - Maintainer tooling: clarify which pnpm test/check commands are safe locally versus inside Codex worktrees, routing linked-worktree gates through node wrappers and Crabbox/Testbox.
-- Gateway/sessions: remove the automatic cron session reaper and retired `cron.sessionRetention`; use `openclaw sessions cleanup` for session-row maintenance while cron run-log pruning remains under `cron.runLog`.
+- Gateway/sessions: remove the automatic cron session reaper and retired `cron.sessionRetention`; session rows are retained for explicit reset/delete flows while cron run-log pruning remains under `cron.runLog`.
 - Auto-reply: preserve same-key ordering when debounced inbound work falls back to immediate flushes, so follow-up turns cannot overtake an active buffered flush.
 - Telegram/WhatsApp: keep Telegram same-chat replies ordered behind active no-delay turns without blocking WhatsApp follow-up message dispatch.
 - Codex migration: avoid duplicate cached plugin bundle warnings when app-server plugin inventory is available.
