@@ -211,6 +211,10 @@ export function storeDeviceAuthToken(params: {
   const row = deviceAuthEntryToRow(params.deviceId, entry);
   runOpenClawStateWriteTransaction((database) => {
     const db = getNodeSqliteKysely<DeviceAuthDatabase>(database.db);
+    executeSqliteQuerySync(
+      database.db,
+      db.deleteFrom("device_auth_tokens").where("device_id", "!=", params.deviceId),
+    );
     upsertDeviceAuthTokenRow(db, database.db, row);
   }, sqliteOptions(params.env));
   return entry;

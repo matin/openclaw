@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { withTempDir } from "../test-utils/temp-dir.js";
 import {
   DeviceIdentityMigrationRequiredError,
+  DeviceIdentityStorageError,
   deriveDeviceIdFromPublicKey,
   loadDeviceIdentityIfPresent,
   loadOrCreateDeviceIdentity,
@@ -92,6 +93,27 @@ describe("device identity crypto helpers", () => {
       } as const;
       writeStoredDeviceIdentitySnapshot({ ...stored, deviceId: "mismatched" }, store);
 
+      expect(loadDeviceIdentityIfPresent(store)).toBeNull();
+    });
+  });
+
+  it("rejects SQLite identities with mismatched private key material", async () => {
+    await withTempDir("openclaw-device-identity-mismatched-key-", async (dir) => {
+      const store = { env: { ...process.env, OPENCLAW_STATE_DIR: dir }, key: "mismatched-key" };
+      const original = loadOrCreateDeviceIdentity(store);
+      const other = loadOrCreateDeviceIdentity({ ...store, key: "other-key" });
+      writeStoredDeviceIdentitySnapshot(
+        {
+          version: 1,
+          deviceId: original.deviceId,
+          publicKeyPem: original.publicKeyPem,
+          privateKeyPem: other.privateKeyPem,
+          createdAtMs: Date.now(),
+        },
+        store,
+      );
+
+      expect(() => loadOrCreateDeviceIdentity(store)).toThrow(DeviceIdentityStorageError);
       expect(loadDeviceIdentityIfPresent(store)).toBeNull();
     });
   });

@@ -78,7 +78,7 @@ describe("infra/device-auth-store", () => {
     });
   });
 
-  it("stores one device token without deleting other devices", async () => {
+  it("drops tokens from previous devices when storing a replacement device token", async () => {
     await withTempDir("openclaw-device-auth-", async (stateDir) => {
       const env = createEnv(stateDir);
 
@@ -98,9 +98,7 @@ describe("infra/device-auth-store", () => {
       expect(loadDeviceAuthToken({ deviceId: "device-1", role: "operator", env })).toMatchObject({
         token: "device-1-token",
       });
-      expect(loadDeviceAuthToken({ deviceId: "device-2", role: "operator", env })).toMatchObject({
-        token: "device-2-token",
-      });
+      expect(loadDeviceAuthToken({ deviceId: "device-2", role: "operator", env })).toBeNull();
     });
   });
 

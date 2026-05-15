@@ -151,12 +151,21 @@ function storedIdentityToRow(
 
 function deriveStoredDeviceIdOrThrow(stored: StoredDeviceIdentity): string {
   const derivedId = deriveDeviceIdFromPublicKey(stored.publicKeyPem);
-  if (!derivedId) {
+  if (!derivedId || !storedPrivateKeyMatchesPublicKey(stored.publicKeyPem, stored.privateKeyPem)) {
     throw new DeviceIdentityStorageError(
       'Stored device identity is invalid. Run "openclaw doctor --fix" before starting the gateway or connecting this client.',
     );
   }
   return derivedId;
+}
+
+function storedPrivateKeyMatchesPublicKey(publicKeyPem: string, privateKeyPem: string): boolean {
+  const payload = "openclaw-device-identity-self-check";
+  try {
+    return verifyDeviceSignature(publicKeyPem, payload, signDevicePayload(privateKeyPem, payload));
+  } catch {
+    return false;
+  }
 }
 
 function readStoredIdentity(options?: DeviceIdentityStoreOptions): StoredDeviceIdentity | null {
@@ -272,6 +281,9 @@ export function loadDeviceIdentityIfPresent(
     }
     const derivedId = deriveDeviceIdFromPublicKey(parsed.publicKeyPem);
     if (!derivedId || derivedId !== parsed.deviceId) {
+      return null;
+    }
+    if (!storedPrivateKeyMatchesPublicKey(parsed.publicKeyPem, parsed.privateKeyPem)) {
       return null;
     }
     return {
