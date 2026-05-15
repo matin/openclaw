@@ -23,6 +23,19 @@ struct DeviceIdentityStoreTests {
         }
     }
 
+    @Test("surfaces SQLite identity read failures distinctly from missing rows")
+    func surfacesSQLiteIdentityReadFailures() throws {
+        try Self.withTempStateDir { stateDir in
+            try FileManager.default.createDirectory(
+                at: Self.databaseURL(stateDir: stateDir),
+                withIntermediateDirectories: true)
+
+            #expect(throws: Error.self) {
+                _ = try OpenClawSQLiteStateStore.readDeviceIdentityChecked()
+            }
+        }
+    }
+
     @Test("loads TypeScript PEM identity schema from SQLite")
     func loadsTypeScriptPEMIdentitySchema() throws {
         try Self.withTempStateDir { stateDir in

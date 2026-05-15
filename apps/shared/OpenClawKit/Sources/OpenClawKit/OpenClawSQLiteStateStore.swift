@@ -64,37 +64,41 @@ public enum OpenClawSQLiteStateStore {
 
     public static func readDeviceIdentity(key: String = "default") -> OpenClawSQLiteDeviceIdentityRow? {
         do {
-            let db = try self.openStateDatabase()
-            defer { sqlite3_close(db) }
-
-            let sql = """
-                SELECT device_id, public_key_pem, private_key_pem, created_at_ms
-                FROM device_identities
-                WHERE identity_key = ?
-                """
-            var statement: OpaquePointer?
-            try self.prepare(db, sql, &statement)
-            defer { sqlite3_finalize(statement) }
-            self.bindText(statement, index: 1, value: key)
-
-            let status = sqlite3_step(statement)
-            if status == SQLITE_ROW,
-               let deviceId = self.columnString(statement, index: 0),
-               let publicKeyPem = self.columnString(statement, index: 1),
-               let privateKeyPem = self.columnString(statement, index: 2)
-            {
-                return OpenClawSQLiteDeviceIdentityRow(
-                    deviceId: deviceId,
-                    publicKeyPem: publicKeyPem,
-                    privateKeyPem: privateKeyPem,
-                    createdAtMs: Int(sqlite3_column_int64(statement, 3)))
-            }
-            if status == SQLITE_DONE { return nil }
-            throw self.sqliteError(db, context: "SQLite device identity read failed")
+            return try self.readDeviceIdentityChecked(key: key)
         } catch {
             self.logger.warning("SQLite device identity read failed: \(error.localizedDescription, privacy: .public)")
             return nil
         }
+    }
+
+    static func readDeviceIdentityChecked(key: String = "default") throws -> OpenClawSQLiteDeviceIdentityRow? {
+        let db = try self.openStateDatabase()
+        defer { sqlite3_close(db) }
+
+        let sql = """
+            SELECT device_id, public_key_pem, private_key_pem, created_at_ms
+            FROM device_identities
+            WHERE identity_key = ?
+            """
+        var statement: OpaquePointer?
+        try self.prepare(db, sql, &statement)
+        defer { sqlite3_finalize(statement) }
+        self.bindText(statement, index: 1, value: key)
+
+        let status = sqlite3_step(statement)
+        if status == SQLITE_ROW,
+           let deviceId = self.columnString(statement, index: 0),
+           let publicKeyPem = self.columnString(statement, index: 1),
+           let privateKeyPem = self.columnString(statement, index: 2)
+        {
+            return OpenClawSQLiteDeviceIdentityRow(
+                deviceId: deviceId,
+                publicKeyPem: publicKeyPem,
+                privateKeyPem: privateKeyPem,
+                createdAtMs: Int(sqlite3_column_int64(statement, 3)))
+        }
+        if status == SQLITE_DONE { return nil }
+        throw self.sqliteError(db, context: "SQLite device identity read failed")
     }
 
     public static func writeDeviceIdentity(
