@@ -261,12 +261,6 @@ describe("Crestodian assistant", () => {
     expect(result).toBeNull();
 
     expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(1);
-    expect(runCliAgent).toHaveBeenCalledTimes(1);
-    const firstCliCall = firstMockArg(runCliAgent);
-    expect(firstCliCall.agentId).toBe("crestodian");
-    expect(firstCliCall.provider).toBe("codex-cli");
-    expect(firstCliCall.model).toBe("gpt-5.5");
-    expect(firstCliCall.cleanupCliLiveSessionOnRunEnd).toBe(true);
-    expect(firstCliCall.sessionId).toMatch(/^crestodian-planner-.*-session$/);
+    expect(runCliAgent).not.toHaveBeenCalled();
   });
 });

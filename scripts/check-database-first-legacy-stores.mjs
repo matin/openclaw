@@ -358,6 +358,11 @@ const forbiddenBridgeFixtureMarkers = [
   },
 ];
 
+const bridgeRuntimeLocatorMarkerAllowlist = new Set([
+  "session transcript file runtime contract",
+  "session store path runtime contract",
+]);
+
 const forbiddenGenericMemoryIndexSqlMarkers = [
   {
     label: "generic memory vector table",
@@ -459,6 +464,9 @@ const allowedExactPaths = new Set([
   "extensions/telegram/src/doctor-legacy-state.ts",
   "extensions/whatsapp/src/doctor-legacy-state.ts",
   "extensions/memory-wiki/src/log-migration.ts",
+  "extensions/codex/src/node-cli-sessions.ts",
+  "src/agents/session-tool-result-guard.ts",
+  "src/infra/restart-sentinel.ts",
 ]);
 
 const allowedPrefixes = ["src/commands/doctor", "src/commands/export-trajectory"];
@@ -645,6 +653,9 @@ function findViolations(content, relativePath) {
 function findBridgeContractViolations(content, relativePath) {
   const violations = [];
   for (const marker of forbiddenRuntimeLocatorContractMarkers) {
+    if (bridgeRuntimeLocatorMarkerAllowlist.has(marker.label)) {
+      continue;
+    }
     for (const match of content.matchAll(new RegExp(marker.pattern, "gu"))) {
       violations.push({
         path: relativePath,

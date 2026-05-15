@@ -561,8 +561,13 @@ export async function startGatewayServer(port: number, opts?: GatewayServerOptio
   // helper reads so startup observes the current fixture state.
   resetConfigRuntimeState();
   const mod = await getServerModule();
+  const authOverride =
+    opts?.auth ??
+    (testState.gatewayAuth ? (testState.gatewayAuth as GatewayServerOptions["auth"]) : undefined);
   const resolvedOpts =
-    opts?.controlUiEnabled === undefined ? { ...opts, controlUiEnabled: false } : opts;
+    opts?.controlUiEnabled === undefined
+      ? { ...opts, controlUiEnabled: false, auth: authOverride }
+      : { ...opts, auth: authOverride };
   if (
     resolvedOpts?.controlUiEnabled === true &&
     process.env.OPENCLAW_TEST_MINIMAL_GATEWAY === "1" &&
