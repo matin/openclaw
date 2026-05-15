@@ -202,10 +202,19 @@ export async function saveSessionStore(
 ): Promise<void> {
   normalizeSessionEntries(store);
   const options = resolveSessionRowOptionsFromStorePath(storePath);
-  const existing = loadSqliteSessionEntries(options);
-  for (const sessionKey of Object.keys(existing)) {
-    if (!Object.prototype.hasOwnProperty.call(store, sessionKey)) {
-      deleteSessionEntry({ ...options, sessionKey });
+  await saveSessionStoreRows(options, store);
+}
+
+async function saveSessionStoreRows(
+  options: SessionRowOptions,
+  store: Record<string, SessionEntry>,
+  deleteScope?: ReadonlySet<string>,
+): Promise<void> {
+  if (deleteScope) {
+    for (const sessionKey of deleteScope) {
+      if (!Object.prototype.hasOwnProperty.call(store, sessionKey)) {
+        deleteSessionEntry({ ...options, sessionKey });
+      }
     }
   }
   for (const [sessionKey, entry] of Object.entries(store)) {
@@ -216,11 +225,14 @@ export async function saveSessionStore(
 export async function updateSessionStore<T>(
   storePath: string,
   mutator: (store: Record<string, SessionEntry>) => Promise<T> | T,
-  opts?: SaveSessionStoreOptions,
+  _opts?: SaveSessionStoreOptions,
 ): Promise<T> {
-  const store = loadSessionStore(storePath);
+  const options = resolveSessionRowOptionsFromStorePath(storePath);
+  const store = loadSqliteSessionEntries(options);
+  const deleteScope = new Set(Object.keys(store));
   const result = await mutator(store);
-  await saveSessionStore(storePath, store, opts);
+  normalizeSessionEntries(store);
+  await saveSessionStoreRows(options, store, deleteScope);
   return result;
 }
 
