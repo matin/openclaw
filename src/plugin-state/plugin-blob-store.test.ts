@@ -30,4 +30,35 @@ describe("plugin blob store", () => {
       await expect(store.entries()).resolves.toEqual([]);
     });
   });
+
+  it("deletes expired entries for the current namespace", async () => {
+    await withOpenClawTestState({ label: "plugin-blob-store-expired" }, async () => {
+      const store = createPluginBlobStore<{ contentType: string }>("zalo", {
+        namespace: "media",
+        maxEntries: 10,
+      });
+      const otherNamespace = createPluginBlobStore<{ contentType: string }>("zalo", {
+        namespace: "other-media",
+        maxEntries: 10,
+      });
+
+      await store.register("live", { contentType: "image/jpeg" }, Buffer.from("live"));
+      await store.register("expired", { contentType: "image/png" }, Buffer.from("expired"), {
+        ttlMs: 1,
+      });
+      await otherNamespace.register("expired", { contentType: "image/gif" }, Buffer.from("other"), {
+        ttlMs: 1,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      await expect(store.deleteExpired()).resolves.toBe(1);
+      await expect(store.entries()).resolves.toMatchObject([
+        {
+          key: "live",
+          metadata: { contentType: "image/jpeg" },
+        },
+      ]);
+      await expect(otherNamespace.deleteExpired()).resolves.toBe(1);
+    });
+  });
 });

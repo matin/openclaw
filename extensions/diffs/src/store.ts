@@ -188,6 +188,8 @@ export class DiffArtifactStore {
   }
 
   async cleanupExpired(): Promise<void> {
+    await this.blobStore.deleteExpired();
+
     const root = await this.artifactRoot();
     const entries = await root.list("", { withFileTypes: true }).catch(() => []);
 

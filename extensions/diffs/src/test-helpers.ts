@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import {
   createPluginBlobStore,
+  type PluginBlobStore,
   resetPluginBlobStoreForTests,
 } from "openclaw/plugin-sdk/plugin-state-runtime";
 import { resolvePreferredOpenClawTmpDir } from "../api.js";
@@ -28,22 +29,25 @@ export async function createDiffStoreHarness(
 ): Promise<{
   rootDir: string;
   store: DiffArtifactStore;
+  blobStore: PluginBlobStore<DiffBlobMetadata>;
   cleanup: () => Promise<void>;
 }> {
   const { rootDir, cleanup } = await createTempDiffRoot(prefix);
   const originalStateDir = process.env.OPENCLAW_STATE_DIR;
   process.env.OPENCLAW_STATE_DIR = await fs.mkdtemp(path.join(rootDir, "state-"));
   resetPluginBlobStoreForTests();
+  const blobStore = createPluginBlobStore<DiffBlobMetadata>("diffs", {
+    namespace: "artifacts",
+    maxEntries: MAX_TEST_DIFF_ARTIFACT_BLOBS,
+  });
   return {
     rootDir,
     store: new DiffArtifactStore({
       rootDir,
       cleanupIntervalMs: options.cleanupIntervalMs,
-      blobStore: createPluginBlobStore<DiffBlobMetadata>("diffs", {
-        namespace: "artifacts",
-        maxEntries: MAX_TEST_DIFF_ARTIFACT_BLOBS,
-      }),
+      blobStore,
     }),
+    blobStore,
     cleanup: async () => {
       if (originalStateDir === undefined) {
         delete process.env.OPENCLAW_STATE_DIR;

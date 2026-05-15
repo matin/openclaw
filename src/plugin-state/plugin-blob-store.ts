@@ -30,6 +30,7 @@ export type PluginBlobStore<TMetadata = Record<string, unknown>> = {
   lookup(key: string): Promise<PluginBlobEntry<TMetadata> | undefined>;
   consume(key: string): Promise<PluginBlobEntry<TMetadata> | undefined>;
   delete(key: string): Promise<boolean>;
+  deleteExpired(): Promise<number>;
   entries(): Promise<PluginBlobEntry<TMetadata>[]>;
   clear(): Promise<void>;
 };
@@ -39,6 +40,7 @@ export type PluginBlobSyncStore<TMetadata = Record<string, unknown>> = {
   lookup(key: string): PluginBlobEntry<TMetadata> | undefined;
   consume(key: string): PluginBlobEntry<TMetadata> | undefined;
   delete(key: string): boolean;
+  deleteExpired(): number;
   entries(): PluginBlobEntry<TMetadata>[];
   clear(): void;
 };
@@ -172,6 +174,9 @@ export function createPluginBlobStore<TMetadata = Record<string, unknown>>(
     },
     async delete(key) {
       return syncStore.delete(key);
+    },
+    async deleteExpired() {
+      return syncStore.deleteExpired();
     },
     async entries() {
       return syncStore.entries();
@@ -340,6 +345,23 @@ export function createPluginBlobSyncStore<TMetadata = Record<string, unknown>>(
         databaseOptions,
       );
       return Number(result.numAffectedRows ?? 0) > 0;
+    },
+    deleteExpired() {
+      const expiredAt = now();
+      const result = runOpenClawStateWriteTransaction(
+        (database) =>
+          executeSqliteQuerySync(
+            database.db,
+            getPluginBlobKysely(database.db)
+              .deleteFrom("plugin_blob_entries")
+              .where("plugin_id", "=", pluginId)
+              .where("namespace", "=", namespace)
+              .where("expires_at", "is not", null)
+              .where("expires_at", "<=", expiredAt),
+          ),
+        databaseOptions,
+      );
+      return Number(result.numAffectedRows ?? 0);
     },
     entries() {
       const database = openOpenClawStateDatabase(databaseOptions);
