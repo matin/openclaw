@@ -16,6 +16,7 @@ import {
 } from "openclaw/plugin-sdk/plugin-config-runtime";
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { createPluginStateKeyedStore } from "openclaw/plugin-sdk/plugin-state-runtime";
+import { parseAgentSessionKey, parseThreadSessionSuffix } from "openclaw/plugin-sdk/routing";
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_AGENT_ID = "main";
@@ -1142,6 +1143,7 @@ function isAllowedChatType(
 }
 
 function resolveConversationId(ctx: {
+  sessionKey?: string;
   messageProvider?: string;
   sessionEntry?: ActiveMemorySessionEntry;
 }): string | undefined {
@@ -1161,6 +1163,26 @@ function resolveConversationId(ctx: {
       normalizeConversationIdValue(ctx.sessionEntry?.deliveryContext?.to);
     if (id) {
       return id;
+    }
+  }
+  return resolveConversationIdFromSessionKey(ctx.sessionKey);
+}
+
+function resolveConversationIdFromSessionKey(sessionKey: string | undefined): string | undefined {
+  const rawSessionKey = sessionKey?.trim();
+  if (!rawSessionKey) {
+    return undefined;
+  }
+  const baseSessionKey = parseThreadSessionSuffix(rawSessionKey).baseSessionKey ?? rawSessionKey;
+  const parsed = parseAgentSessionKey(baseSessionKey);
+  if (!parsed) {
+    return undefined;
+  }
+  const parts = parsed.rest.split(":").filter(Boolean);
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    const kind = parts[index];
+    if (kind === "direct" || kind === "dm" || kind === "group" || kind === "channel") {
+      return normalizeConversationIdValue(parts.slice(index + 1).join(":"));
     }
   }
   return undefined;
@@ -2928,6 +2950,7 @@ export default definePluginEntry({
           }
           if (
             !isAllowedChatId(config, {
+              sessionKey: resolvedSessionKey,
               messageProvider: ctx.messageProvider,
               sessionEntry,
             })
