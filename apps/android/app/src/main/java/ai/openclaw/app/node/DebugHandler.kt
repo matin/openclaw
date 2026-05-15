@@ -4,8 +4,13 @@ import ai.openclaw.app.BuildConfig
 import ai.openclaw.app.gateway.DeviceIdentityStore
 import ai.openclaw.app.gateway.GatewaySession
 import kotlinx.serialization.json.JsonPrimitive
+import java.io.InputStream
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 private const val LOGCAT_PATH = "/system/bin/logcat"
+private const val LOGCAT_TIMEOUT_MS = 4_000L
+private const val LOGCAT_MAX_CHARS = 128_000
 
 class DebugHandler(
   private val identityStore: DeviceIdentityStore,
@@ -85,9 +90,7 @@ class DebugHandler(
         val pb = ProcessBuilder(LOGCAT_PATH, "-d", "-t", "200", "--pid=$pid")
         pb.redirectErrorStream(true)
         val proc = pb.start()
-        val finished = proc.waitFor(4, java.util.concurrent.TimeUnit.SECONDS)
-        if (!finished) proc.destroyForcibly()
-        val raw = proc.inputStream.bufferedReader().use { it.readText().take(128000) }
+        val (finished, raw) = collectProcessOutput(proc, LOGCAT_TIMEOUT_MS, LOGCAT_MAX_CHARS)
         val normalizedRaw = raw.ifBlank { "(no output, finished=$finished)" }
         val spamPatterns =
           listOf(
@@ -126,3 +129,45 @@ class DebugHandler(
     return GatewaySession.InvokeResult.ok("""{"logs":${JsonPrimitive(info + logResult)}}""")
   }
 }
+
+internal fun collectProcessOutput(
+  process: Process,
+  timeoutMs: Long,
+  maxChars: Int,
+): Pair<Boolean, String> {
+  val output = AtomicReference("")
+  val failure = AtomicReference<Throwable?>(null)
+  val reader =
+    Thread({
+      try {
+        output.set(readBoundedText(process.inputStream, maxChars))
+      } catch (error: Throwable) {
+        failure.set(error)
+      }
+    }, "openclaw-debug-output-reader")
+  reader.isDaemon = true
+  reader.start()
+
+  val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+  if (!finished) {
+    process.destroyForcibly()
+  }
+  reader.join(1_000)
+  failure.get()?.let { throw it }
+  return finished to output.get()
+}
+
+private fun readBoundedText(
+  stream: InputStream,
+  maxChars: Int,
+): String =
+  stream.bufferedReader().use { reader ->
+    val out = StringBuilder(minOf(maxChars, 8192))
+    val buffer = CharArray(4096)
+    while (out.length < maxChars) {
+      val read = reader.read(buffer, 0, minOf(buffer.size, maxChars - out.length))
+      if (read < 0) break
+      out.append(buffer, 0, read)
+    }
+    out.toString()
+  }

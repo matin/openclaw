@@ -85,10 +85,17 @@ public enum DeviceIdentityStore {
                 preconditionFailure("Stored OpenClaw device identity is invalid. Run openclaw doctor --fix.")
             }
         }
-        if self.legacyIdentityMigrationRequired() {
+        switch self.loadLegacyIdentity() {
+        case .some(.identity(let identity)):
+            self.save(identity)
+            try? FileManager.default.removeItem(at: self.legacyIdentityURL())
+            return identity
+        case .some(.recognizedInvalid):
             preconditionFailure(
                 "Legacy OpenClaw device identity exists at \(self.legacyIdentityURL().path). " +
                     "Run openclaw doctor --fix before starting runtime.")
+        case nil:
+            break
         }
         let identity = self.generate()
         self.save(identity)
@@ -123,6 +130,38 @@ public enum DeviceIdentityStore {
         guard decoded.version == 1,
               let publicKeyData = self.rawPublicKey(fromPEM: decoded.publicKeyPem),
               let privateKeyData = self.rawPrivateKey(fromPEM: decoded.privateKeyPem),
+              self.keyPairMatches(publicKeyData: publicKeyData, privateKeyData: privateKeyData)
+        else {
+            return .recognizedInvalid
+        }
+        return .identity(DeviceIdentity(
+            deviceId: self.deviceId(publicKeyData: publicKeyData),
+            publicKey: publicKeyData.base64EncodedString(),
+            privateKey: privateKeyData.base64EncodedString(),
+            createdAtMs: decoded.createdAtMs))
+    }
+
+    private static func loadLegacyIdentity() -> DecodeResult? {
+        let url = self.legacyIdentityURL()
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        guard let data = try? Data(contentsOf: url) else {
+            return .recognizedInvalid
+        }
+        return self.decodeLegacyIdentity(data)
+    }
+
+    private static func decodeLegacyIdentity(_ data: Data) -> DecodeResult {
+        let decoder = JSONDecoder()
+        if let stored = try? decoder.decode(StoredDeviceIdentity.self, from: data) {
+            return self.decodeStoredIdentity(stored)
+        }
+        guard let decoded = try? decoder.decode(DeviceIdentity.self, from: data),
+              let publicKeyData = Data(base64Encoded: decoded.publicKey),
+              let privateKeyData = Data(base64Encoded: decoded.privateKey),
+              publicKeyData.count == 32,
+              privateKeyData.count == 32,
               self.keyPairMatches(publicKeyData: publicKeyData, privateKeyData: privateKeyData)
         else {
             return .recognizedInvalid

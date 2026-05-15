@@ -3,6 +3,7 @@ package ai.openclaw.app.gateway
 import android.content.Context
 import android.util.Base64
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import java.io.File
 import java.security.MessageDigest
 
@@ -17,6 +18,7 @@ data class DeviceIdentity(
 class DeviceIdentityStore(
   context: Context,
 ) {
+  private val json = Json { ignoreUnknownKeys = true }
   private val stateStore = OpenClawSQLiteStateStore(context)
   private val legacyIdentityFile = File(context.filesDir, "openclaw/identity/device.json")
 
@@ -31,9 +33,9 @@ class DeviceIdentityStore(
       return existing
     }
     if (legacyIdentityFile.exists()) {
-      throw IllegalStateException(
-        "Legacy OpenClaw device identity file exists. Run openclaw doctor --fix before starting runtime.",
-      )
+      val migrated = migrateLegacyIdentity()
+      cachedIdentity = migrated
+      return migrated
     }
     val fresh = generate()
     save(fresh)
@@ -116,13 +118,56 @@ class DeviceIdentityStore(
       )
   }
 
+  private fun migrateLegacyIdentity(): DeviceIdentity {
+    val raw =
+      try {
+        legacyIdentityFile.readText(Charsets.UTF_8)
+      } catch (error: Throwable) {
+        throw IllegalStateException("Failed to read legacy OpenClaw device identity.", error)
+      }
+    val identity =
+      runCatching { json.decodeFromString(DeviceIdentity.serializer(), raw) }
+        .getOrNull()
+        ?.let(::normalizeRawIdentity)
+        ?: throw IllegalStateException(
+          "Legacy OpenClaw device identity is invalid. Run openclaw doctor --fix.",
+        )
+    save(identity)
+    legacyIdentityFile.delete()
+    return identity
+  }
+
+  private fun normalizeRawIdentity(identity: DeviceIdentity): DeviceIdentity? =
+    try {
+      if (identity.publicKeyRawBase64.isBlank() || identity.privateKeyPkcs8Base64.isBlank()) {
+        return null
+      }
+      val publicRaw = Base64.decode(identity.publicKeyRawBase64, Base64.DEFAULT)
+      val privateDer = Base64.decode(identity.privateKeyPkcs8Base64, Base64.DEFAULT)
+      if (publicRaw.size != ED25519_KEY_SIZE || privateDer.isEmpty()) {
+        return null
+      }
+      val normalized = identity.copy(deviceId = sha256Hex(publicRaw))
+      if (!hasMatchingKeyPair(normalized)) {
+        return null
+      }
+      normalized
+    } catch (_: Throwable) {
+      null
+    }
+
   private fun readIdentity(row: OpenClawSQLiteDeviceIdentityRow): DeviceIdentity? =
     PersistedDeviceIdentity(
       deviceId = row.deviceId,
       publicKeyPem = row.publicKeyPem,
       privateKeyPem = row.privateKeyPem,
       createdAtMs = row.createdAtMs,
-    ).toRuntimeIdentity()
+    ).toRuntimeIdentity()?.takeIf(::hasMatchingKeyPair)
+
+  private fun hasMatchingKeyPair(identity: DeviceIdentity): Boolean {
+    val signature = signPayload(KEYPAIR_VALIDATION_PAYLOAD, identity) ?: return false
+    return verifySelfSignature(KEYPAIR_VALIDATION_PAYLOAD, signature, identity)
+  }
 
   private fun save(identity: DeviceIdentity) {
     val persisted = PersistedDeviceIdentity.fromRuntimeIdentity(identity)
@@ -225,6 +270,7 @@ class DeviceIdentityStore(
 
   companion object {
     private const val IDENTITY_KEY = "default"
+    private const val KEYPAIR_VALIDATION_PAYLOAD = "openclaw-device-identity-keypair-validation"
     private const val ED25519_KEY_SIZE = 32
     private val HEX = "0123456789abcdef".toCharArray()
     private val PUBLIC_KEY_INFO_PREFIX =

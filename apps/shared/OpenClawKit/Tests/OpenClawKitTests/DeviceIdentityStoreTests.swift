@@ -57,17 +57,29 @@ struct DeviceIdentityStoreTests {
         }
     }
 
-    @Test("requires doctor migration when legacy identity exists before SQLite row")
-    func requiresDoctorMigrationForLegacyIdentity() throws {
+    @Test("migrates legacy raw device identity sidecar into SQLite")
+    func migratesLegacyRawIdentitySidecarIntoSQLite() throws {
         try Self.withTempStateDir { stateDir in
             let legacyURL = Self.legacyIdentityURL(stateDir: stateDir)
             try FileManager.default.createDirectory(
                 at: legacyURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true)
-            try "{}".write(to: legacyURL, atomically: true, encoding: .utf8)
+            let legacy = Self.legacyRawIdentity()
+            let data = try JSONEncoder().encode(legacy)
+            try data.write(to: legacyURL)
 
             #expect(DeviceIdentityStore.legacyIdentityMigrationRequired())
-            #expect(!FileManager.default.fileExists(atPath: Self.databaseURL(stateDir: stateDir).path))
+            let identity = DeviceIdentityStore.loadOrCreate()
+
+            #expect(identity.deviceId == legacy.deviceId)
+            #expect(identity.publicKey == legacy.publicKey)
+            #expect(identity.privateKey == legacy.privateKey)
+            #expect(identity.createdAtMs == legacy.createdAtMs)
+            #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
+
+            let stored = try #require(OpenClawSQLiteStateStore.readDeviceIdentity())
+            #expect(stored.deviceId == legacy.deviceId)
+            #expect(FileManager.default.fileExists(atPath: Self.databaseURL(stateDir: stateDir).path))
         }
     }
 
@@ -93,6 +105,70 @@ struct DeviceIdentityStoreTests {
 
             DeviceAuthStore.clearToken(deviceId: "device-1", role: "gateway")
             #expect(DeviceAuthStore.loadToken(deviceId: "device-1", role: "gateway") == nil)
+        }
+    }
+
+    @Test("migrates legacy device auth sidecar into SQLite")
+    func migratesLegacyDeviceAuthSidecarIntoSQLite() throws {
+        try Self.withTempStateDir { stateDir in
+            let legacyURL = Self.legacyAuthURL(stateDir: stateDir)
+            try FileManager.default.createDirectory(
+                at: legacyURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            let legacy = [
+                "version": 1,
+                "deviceId": "device-1",
+                "tokens": [
+                    "gateway": [
+                        "token": "token-1",
+                        "role": "gateway",
+                        "scopes": ["write", " read ", "write"],
+                        "updatedAtMs": 1_700_000_000_000,
+                    ],
+                ],
+            ] as [String: Any]
+            let data = try JSONSerialization.data(withJSONObject: legacy, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: legacyURL)
+
+            let entry = try #require(DeviceAuthStore.loadToken(deviceId: "device-1", role: "gateway"))
+
+            #expect(entry.token == "token-1")
+            #expect(entry.role == "gateway")
+            #expect(entry.scopes == ["read", "write"])
+            #expect(entry.updatedAtMs == 1_700_000_000_000)
+            #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
+            let stored = try #require(OpenClawSQLiteStateStore.readDeviceAuthToken(
+                deviceId: "device-1",
+                role: "gateway"))
+            #expect(stored.token == "token-1")
+        }
+    }
+
+    @Test("keeps legacy device auth sidecar when SQLite import fails")
+    func keepsLegacyDeviceAuthSidecarWhenSQLiteImportFails() throws {
+        try Self.withTempStateDir { stateDir in
+            let legacyURL = Self.legacyAuthURL(stateDir: stateDir)
+            try FileManager.default.createDirectory(
+                at: legacyURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            let legacy = [
+                "version": 1,
+                "deviceId": "device-1",
+                "tokens": [
+                    "gateway": [
+                        "token": "token-1",
+                        "role": "gateway",
+                        "scopes": ["read"],
+                        "updatedAtMs": 1_700_000_000_000,
+                    ],
+                ],
+            ] as [String: Any]
+            let data = try JSONSerialization.data(withJSONObject: legacy, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: legacyURL)
+            try FileManager.default.createDirectory(at: Self.databaseURL(stateDir: stateDir), withIntermediateDirectories: true)
+
+            #expect(DeviceAuthStore.loadToken(deviceId: "device-1", role: "gateway") == nil)
+            #expect(FileManager.default.fileExists(atPath: legacyURL.path))
         }
     }
 
@@ -133,6 +209,20 @@ struct DeviceIdentityStoreTests {
             .replacingOccurrences(of: "_", with: "/")
         let padded = normalized + String(repeating: "=", count: (4 - normalized.count % 4) % 4)
         return Data(base64Encoded: padded)
+    }
+
+    private static func legacyRawIdentity() -> DeviceIdentity {
+        let privateKey = Curve25519.Signing.PrivateKey()
+        let publicKeyData = privateKey.publicKey.rawRepresentation
+        let privateKeyData = privateKey.rawRepresentation
+        let deviceId = SHA256.hash(data: publicKeyData).compactMap {
+            String(format: "%02x", $0)
+        }.joined()
+        return DeviceIdentity(
+            deviceId: deviceId,
+            publicKey: publicKeyData.base64EncodedString(),
+            privateKey: privateKeyData.base64EncodedString(),
+            createdAtMs: 1_700_000_000_000)
     }
 
     private static func identityJSON(publicKeyPem: String, privateKeyPem: String) throws -> Data {

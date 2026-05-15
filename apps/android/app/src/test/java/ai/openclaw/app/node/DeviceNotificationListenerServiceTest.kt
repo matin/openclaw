@@ -36,6 +36,24 @@ class DeviceNotificationListenerServiceTest {
   }
 
   @Test
+  fun recentPackages_migratesLegacySecurePrefsRows() {
+    val context = RuntimeEnvironment.getApplication()
+    context
+      .getSharedPreferences("openclaw.secure", android.content.Context.MODE_PRIVATE)
+      .edit()
+      .putString("notifications." + "recentPackages", " com.example.legacy,com.example.other,com.example.legacy ")
+      .apply()
+
+    val packages = DeviceNotificationListenerService.recentPackages(context)
+
+    assertEquals(listOf("com.example.legacy", "com.example.other"), packages)
+    assertEquals(
+      listOf("com.example.legacy", "com.example.other"),
+      OpenClawSQLiteStateStore(context).readRecentNotificationPackages(),
+    )
+  }
+
+  @Test
   fun recentPackages_trimsDedupesAndPreservesRecencyOrder() {
     val context = RuntimeEnvironment.getApplication()
     OpenClawSQLiteStateStore(context).replaceRecentNotificationPackages(

@@ -278,6 +278,9 @@ class DeviceNotificationListenerService : NotificationListenerService() {
   }
 
   companion object {
+    private const val notificationsPrefsPrefix = "notifications."
+    private const val recentPackagesPref = notificationsPrefsPrefix + "forwarding.recentPackages"
+    private const val legacyRecentPackagesPref = notificationsPrefsPrefix + "recentPackages"
     private const val recentPackagesLimit = 64
 
     @Volatile private var activeService: DeviceNotificationListenerService? = null
@@ -290,9 +293,44 @@ class DeviceNotificationListenerService : NotificationListenerService() {
       nodeEventSink = sink
     }
 
-    fun recentPackages(context: Context): List<String> =
-      OpenClawSQLiteStateStore(context)
-        .readRecentNotificationPackages(recentPackagesLimit)
+    private fun recentPackagesPrefs(context: Context) =
+      context.applicationContext.getSharedPreferences("openclaw.secure", Context.MODE_PRIVATE)
+
+    private fun migrateLegacyRecentPackagesIfNeeded(
+      context: Context,
+      stateStore: OpenClawSQLiteStateStore,
+    ): List<String> {
+      val prefs = recentPackagesPrefs(context)
+      val raw =
+        prefs.getString(recentPackagesPref, null)?.trim()?.takeIf { it.isNotEmpty() }
+          ?: prefs.getString(legacyRecentPackagesPref, null)?.trim().orEmpty()
+      val packages =
+        raw
+          .split(',')
+          .map { it.trim() }
+          .filter { it.isNotEmpty() }
+          .distinct()
+          .take(recentPackagesLimit)
+      if (packages.isNotEmpty()) {
+        stateStore.replaceRecentNotificationPackages(packages, recentPackagesLimit)
+      }
+      if (prefs.contains(recentPackagesPref) || prefs.contains(legacyRecentPackagesPref)) {
+        prefs.edit()
+          .remove(recentPackagesPref)
+          .remove(legacyRecentPackagesPref)
+          .apply()
+      }
+      return packages
+    }
+
+    fun recentPackages(context: Context): List<String> {
+      val stateStore = OpenClawSQLiteStateStore(context)
+      val stored = stateStore.readRecentNotificationPackages(recentPackagesLimit)
+      if (stored.isNotEmpty()) {
+        return stored
+      }
+      return migrateLegacyRecentPackagesIfNeeded(context, stateStore)
+    }
 
     fun isAccessEnabled(context: Context): Boolean {
       val manager = context.getSystemService(NotificationManager::class.java) ?: return false

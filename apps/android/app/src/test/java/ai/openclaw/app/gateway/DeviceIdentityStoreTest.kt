@@ -76,7 +76,62 @@ class DeviceIdentityStoreTest {
   }
 
   @Test
-  fun legacyJsonIdentityFailsClosedInsteadOfRotatingIdentity() {
+  fun loadOrCreateRejectsSQLiteIdentityWhenPrivateKeyDoesNotMatchPublicKey() {
+    val app = RuntimeEnvironment.getApplication()
+    val mismatchedPrivate = DeviceIdentityStore(app).loadOrCreate().privateKeyPkcs8Base64
+    File(app.filesDir, "openclaw").deleteRecursively()
+
+    OpenClawSQLiteStateStore(app).writeDeviceIdentity(
+      OpenClawSQLiteDeviceIdentityRow(
+        deviceId = "56475aa75463474c0285df5dbf2bcab73da651358839e9b77481b2eab107708c",
+        publicKeyPem =
+          """
+          -----BEGIN PUBLIC KEY-----
+          MCowBQYDK2VwAyEAA6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=
+          -----END PUBLIC KEY-----
+          """.trimIndent(),
+        privateKeyPem = pemBlock("PRIVATE" + " KEY", mismatchedPrivate),
+        createdAtMs = 1_700_000_000_000L,
+      ),
+    )
+
+    try {
+      DeviceIdentityStore(app).loadOrCreate()
+      fail("Expected mismatched SQLite identity keypair to block startup")
+    } catch (error: IllegalStateException) {
+      assertTrue(error.message?.contains("Run openclaw doctor --fix") == true)
+    }
+  }
+
+  @Test
+  fun loadOrCreateMigratesLegacyJsonIdentityInApp() {
+    val app = RuntimeEnvironment.getApplication()
+    val seed = DeviceIdentityStore(app).loadOrCreate()
+    File(app.filesDir, "openclaw").deleteRecursively()
+    val legacy = File(app.filesDir, "openclaw/identity/device.json")
+    legacy.parentFile?.mkdirs()
+    legacy.writeText(
+      """
+      {
+        "deviceId": "stale",
+        "publicKeyRawBase64": "${seed.publicKeyRawBase64}",
+        "privateKeyPkcs8Base64": "${seed.privateKeyPkcs8Base64}",
+        "createdAtMs": ${seed.createdAtMs}
+      }
+      """.trimIndent(),
+      Charsets.UTF_8,
+    )
+
+    val migrated = DeviceIdentityStore(app).loadOrCreate()
+
+    assertEquals(seed.deviceId, migrated.deviceId)
+    assertEquals(seed.publicKeyRawBase64, migrated.publicKeyRawBase64)
+    assertFalse(legacy.exists())
+    assertTrue(File(app.filesDir, "openclaw/state/openclaw.sqlite").exists())
+  }
+
+  @Test
+  fun invalidLegacyJsonIdentityFailsClosedInsteadOfRotatingIdentity() {
     val app = RuntimeEnvironment.getApplication()
     val legacy = File(app.filesDir, "openclaw/identity/device.json")
     legacy.parentFile?.mkdirs()
@@ -84,12 +139,10 @@ class DeviceIdentityStoreTest {
 
     try {
       DeviceIdentityStore(app).loadOrCreate()
-      fail("Expected legacy JSON identity to block startup")
+      fail("Expected invalid legacy JSON identity to block startup")
     } catch (error: IllegalStateException) {
       assertTrue(error.message?.contains("Run openclaw doctor --fix") == true)
     }
-
-    assertFalse(File(app.filesDir, "openclaw/state/openclaw.sqlite").exists())
   }
 
   private fun readIdentityRow(): String? {
