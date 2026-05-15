@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
+import { resolveStateDir } from "../../config/paths.js";
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
 import { resolveUserPath } from "../../utils.js";
 import { resolveDefaultAgentDir } from "../agent-scope-config.js";
+
+const LEGACY_AUTH_PROFILE_FILENAME = "auth-profiles.json";
+const LEGACY_AUTH_STATE_FILENAME = "auth-state.json";
+const LEGACY_AUTH_FILENAME = "auth.json";
 
 export function resolveAuthProfileStoreAgentDir(agentDir?: string): string {
   return resolveUserPath(agentDir ?? resolveDefaultAgentDir({}));
@@ -9,6 +15,28 @@ export function resolveAuthProfileStoreAgentDir(agentDir?: string): string {
 
 export function resolveAuthProfileStoreKey(agentDir?: string): string {
   return resolveAuthProfileStoreAgentDir(agentDir);
+}
+
+export function resolveAuthStorePath(agentDir?: string): string {
+  return path.join(resolveAuthProfileStoreAgentDir(agentDir), LEGACY_AUTH_PROFILE_FILENAME);
+}
+
+export function resolveLegacyAuthStorePath(agentDir?: string): string {
+  return path.join(resolveAuthProfileStoreAgentDir(agentDir), LEGACY_AUTH_FILENAME);
+}
+
+export function resolveAuthStatePath(agentDir?: string): string {
+  return path.join(resolveAuthProfileStoreAgentDir(agentDir), LEGACY_AUTH_STATE_FILENAME);
+}
+
+export function resolveAuthStorePathForDisplay(agentDir?: string): string {
+  const pathname = resolveAuthStorePath(agentDir);
+  return pathname.startsWith("~") ? pathname : resolveUserPath(pathname);
+}
+
+export function resolveAuthStatePathForDisplay(agentDir?: string): string {
+  const pathname = resolveAuthStatePath(agentDir);
+  return pathname.startsWith("~") ? pathname : resolveUserPath(pathname);
 }
 
 export function resolveAuthProfileStoreLocationForDisplay(
@@ -38,4 +66,13 @@ function buildOAuthRefreshLockHash(provider: string, profileId: string): string 
  */
 export function resolveOAuthRefreshLockKey(provider: string, profileId: string): string {
   return buildOAuthRefreshLockHash(provider, profileId);
+}
+
+export function resolveOAuthRefreshLockPath(provider: string, profileId: string): string {
+  return path.join(
+    resolveStateDir(),
+    "locks",
+    "oauth-refresh",
+    buildOAuthRefreshLockHash(provider, profileId),
+  );
 }

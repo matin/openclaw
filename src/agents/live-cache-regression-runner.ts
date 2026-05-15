@@ -19,10 +19,6 @@ import {
 } from "./live-cache-test-support.js";
 import { shouldSkipLiveProviderDrift } from "./live-test-provider-drift.js";
 import type { AssistantMessage, Message, Tool } from "./pi-ai-contract.js";
-import {
-  isAuthErrorMessage,
-  isBillingErrorMessage,
-} from "./pi-embedded-helpers/failover-matches.js";
 
 const OPENAI_TIMEOUT_MS = 120_000;
 const ANTHROPIC_TIMEOUT_MS = 120_000;

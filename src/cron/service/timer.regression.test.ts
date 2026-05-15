@@ -1567,7 +1567,7 @@ describe("cron service timer regressions", () => {
     async ({ phase, phaseText, id, name }) => {
       vi.useFakeTimers();
       try {
-        const store = timerRegressionFixtures.makeStorePath();
+        const store = timerRegressionFixtures.makeStoreKey();
         const scheduledAt = Date.parse("2026-05-13T09:56:00.000Z");
         const cronJob = createIsolatedRegressionJob({
           id,
@@ -1577,7 +1577,7 @@ describe("cron service timer regressions", () => {
           payload: { kind: "agentTurn", message: "work", timeoutSeconds: 1_200 },
           state: { nextRunAtMs: scheduledAt },
         });
-        await writeCronJobs(store.storePath, [cronJob]);
+        await writeCronJobs(store.storeKey, [cronJob]);
 
         vi.setSystemTime(scheduledAt);
         let now = scheduledAt;
@@ -1586,7 +1586,7 @@ describe("cron service timer regressions", () => {
         const cleanupTimedOutAgentRun = vi.fn(async () => {});
         const state = createCronServiceState({
           cronEnabled: true,
-          storePath: store.storePath,
+          storeKey: store.storeKey,
           log: noopLogger,
           nowMs: () => now,
           enqueueSystemEvent: vi.fn(),

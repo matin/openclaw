@@ -166,33 +166,8 @@ export async function resolveLiveDirectModelPool(params: {
   envVar: string;
   preferredModelIds: readonly string[];
 }): Promise<LiveResolvedModelPool> {
-  const liveKeys = collectProviderApiKeys(params.provider);
   const rawModel = process.env[params.envVar]?.trim();
   const parsed = rawModel ? parseModelRef(rawModel, params.provider) : null;
-  const requestedModelId =
-    parsed && normalizeProviderId(parsed.provider) === params.provider ? parsed.model : rawModel;
-  if (liveKeys.length > 0) {
-    const selectedModel = requestedModelId
-      ? getModel(params.provider, requestedModelId as never)
-      : params.preferredModelIds
-          .map((id) => getModel(params.provider, id as never))
-          .find((model) => model?.api === params.api);
-    if (!selectedModel || selectedModel.api !== params.api) {
-      throw new Error(
-        requestedModelId
-          ? `Model not found for ${params.provider}: ${requestedModelId}`
-          : `No built-in ${params.provider} ${params.api} model available.`,
-      );
-    }
-    logLiveCache(`resolved ${params.provider} model ${selectedModel.id} from live env key`);
-    return {
-      apiKeys: liveKeys,
-      fixture: {
-        model: selectedModel,
-        apiKey: liveKeys[0] ?? "",
-      },
-    };
-  }
 
   logLiveCache(`resolving ${params.provider} model from configured auth storage`);
   const cfg = getRuntimeConfig();
@@ -201,8 +176,6 @@ export async function resolveLiveDirectModelPool(params: {
   const authStorage = discoverAuthStorage(agentDir);
   const models = discoverModels(authStorage, agentDir).getAll();
 
-  const rawModel = process.env[params.envVar]?.trim();
-  const parsed = rawModel ? parseModelRef(rawModel, params.provider) : null;
   const candidates = models.filter(
     (model) => normalizeProviderId(model.provider) === params.provider && model.api === params.api,
   );
@@ -239,7 +212,7 @@ export async function resolveLiveDirectModelPool(params: {
       resolvedModel.provider,
     );
   return {
-    apiKeys: [apiKey],
+    apiKeys: liveKeys.length > 0 ? liveKeys : [apiKey],
     fixture: {
       model: resolvedModel,
       apiKey,

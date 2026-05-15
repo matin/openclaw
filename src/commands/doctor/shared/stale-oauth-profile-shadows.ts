@@ -5,7 +5,6 @@ import {
   resolveDefaultAgentDir,
   listAgentEntries,
 } from "../../../agents/agent-scope.js";
-import { AUTH_STORE_LOCK_OPTIONS } from "../../../agents/auth-profiles/constants.js";
 import {
   areOAuthCredentialsEquivalent,
   hasUsableOAuthCredential,
@@ -17,7 +16,7 @@ import { saveAuthProfileStore } from "../../../agents/auth-profiles/store.js";
 import type { AuthProfileStore, OAuthCredential } from "../../../agents/auth-profiles/types.js";
 import { resolveStateDir } from "../../../config/paths.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
-import { withFileLock } from "../../../infra/file-lock.js";
+import { withOpenClawStateLock } from "../../../state/openclaw-state-lock.js";
 import { shortenHomePath } from "../../../utils.js";
 
 type StaleOAuthProfileShadow = {
@@ -26,57 +25,17 @@ type StaleOAuthProfileShadow = {
   profileId: string;
 };
 
-const LEGACY_OAUTH_REF_SOURCE = "openclaw-credentials";
-const LEGACY_OAUTH_REF_PROVIDER = "openai-codex";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function isLegacyOAuthRef(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    value.source === LEGACY_OAUTH_REF_SOURCE &&
-    value.provider === LEGACY_OAUTH_REF_PROVIDER &&
-    typeof value.id === "string" &&
-    /^[a-f0-9]{32}$/.test(value.id)
-  );
-}
-
-async function loadRawAuthProfileStore(authPath: string): Promise<Record<string, unknown> | null> {
-  try {
-    const raw = JSON.parse(await fs.readFile(authPath, "utf8")) as unknown;
-    return isRecord(raw) ? raw : null;
-  } catch {
-    return null;
-  }
-}
-
-function hasLegacyOAuthSidecarRef(raw: Record<string, unknown> | null, profileId: string): boolean {
-  if (!raw || !isRecord(raw.profiles)) {
-    return false;
-  }
-  const profile = raw.profiles[profileId];
-  if (!isRecord(profile)) {
-    return false;
-  }
-  // Removal-only guard for #79006 sidecar OAuth profiles. Do not add OS-level
-  // keychain integrations; doctor must migrate these profiles, not delete them.
-  return (
-    profile.type === "oauth" &&
-    profile.provider === LEGACY_OAUTH_REF_PROVIDER &&
-    isLegacyOAuthRef(profile.oauthRef)
-  );
-}
-
-async function pathExists(targetPath: string): Promise<boolean> {
-  try {
-    await fs.lstat(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
+const AUTH_STORE_REPAIR_LOCK_OPTIONS = {
+  retries: {
+    retries: 5,
+    factor: 1.2,
+    minTimeout: 50,
+    maxTimeout: 500,
+    randomize: true,
+  },
+  scope: "auth-profile-store.repair",
+  stale: 30_000,
+} as const;
 
 async function collectStateAgentDirs(env: NodeJS.ProcessEnv): Promise<string[]> {
   const agentsRoot = path.join(resolveStateDir(env), "agents");
@@ -138,26 +97,22 @@ export async function scanStaleOAuthProfileShadows(params: {
   const now = params.now ?? Date.now();
   const mainAgentDir = resolveDefaultAgentDir({}, env);
   const mainAuthPath = path.resolve(resolveAuthStorePath(mainAgentDir));
-  const mainStore = loadPersistedAuthProfileStore(mainAgentDir);
+  const mainStore = loadPersistedAuthProfileStore(mainAgentDir, { env });
   if (!mainStore) {
     return [];
   }
   const hits: StaleOAuthProfileShadow[] = [];
   for (const agentDir of await collectCandidateAgentDirs(params.cfg, env)) {
     const authPath = path.resolve(resolveAuthStorePath(agentDir));
-    if (authPath === mainAuthPath || !(await pathExists(authPath))) {
+    if (authPath === mainAuthPath) {
       continue;
     }
-    const rawLocalStore = await loadRawAuthProfileStore(authPath);
-    const localStore = loadPersistedAuthProfileStore(agentDir);
+    const localStore = loadPersistedAuthProfileStore(agentDir, { env });
     if (!localStore) {
       continue;
     }
     for (const [profileId, local] of Object.entries(localStore.profiles)) {
       if (local.type !== "oauth") {
-        continue;
-      }
-      if (hasLegacyOAuthSidecarRef(rawLocalStore, profileId)) {
         continue;
       }
       const main = mainStore.profiles[profileId];
@@ -221,39 +176,34 @@ function formatProfileList(profileIds: string[]): string {
 
 async function repairStaleOAuthProfilesForAgent(params: {
   agentDir: string;
+  env: NodeJS.ProcessEnv;
   mainStore: AuthProfileStore;
   profileIds: Set<string>;
   now: number;
 }): Promise<
   { status: "changed"; removedProfileIds: string[] } | { status: "missing" | "unchanged" }
 > {
-  return await withFileLock(
+  return await withOpenClawStateLock(
     resolveAuthStorePath(params.agentDir),
-    AUTH_STORE_LOCK_OPTIONS,
+    {
+      ...AUTH_STORE_REPAIR_LOCK_OPTIONS,
+      env: params.env,
+    },
     async () => {
-      const store = loadPersistedAuthProfileStore(params.agentDir);
+      const store = loadPersistedAuthProfileStore(params.agentDir, { env: params.env });
       if (!store) {
         return { status: "missing" };
-      }
-      const rawStore = await loadRawAuthProfileStore(resolveAuthStorePath(params.agentDir));
-      const profileIds = new Set(
-        [...params.profileIds].filter(
-          (profileId) => !hasLegacyOAuthSidecarRef(rawStore, profileId),
-        ),
-      );
-      if (profileIds.size === 0) {
-        return { status: "unchanged" };
       }
       const result = removeStaleProfilesFromStore({
         store,
         mainStore: params.mainStore,
-        profileIds,
+        profileIds: params.profileIds,
         now: params.now,
       });
       if (result.removedProfileIds.length === 0) {
         return { status: "unchanged" };
       }
-      saveAuthProfileStore(result.store, params.agentDir);
+      saveAuthProfileStore(result.store, params.agentDir, { env: params.env });
       return {
         status: "changed",
         removedProfileIds: result.removedProfileIds,
@@ -289,7 +239,7 @@ export async function repairStaleOAuthProfileShadows(params: {
     byAgentDir.set(hit.agentDir, existing);
   }
   for (const [agentDir, agentHits] of byAgentDir) {
-    const mainStore = loadPersistedAuthProfileStore(resolveDefaultAgentDir({}, env));
+    const mainStore = loadPersistedAuthProfileStore(resolveDefaultAgentDir({}, env), { env });
     if (!mainStore) {
       continue;
     }
@@ -297,6 +247,7 @@ export async function repairStaleOAuthProfileShadows(params: {
     try {
       const repair = await repairStaleOAuthProfilesForAgent({
         agentDir,
+        env,
         mainStore,
         profileIds,
         now,
