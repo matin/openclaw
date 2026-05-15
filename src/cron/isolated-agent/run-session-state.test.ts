@@ -171,7 +171,6 @@ describe("createPersistCronSessionEntry", () => {
     const cronSession = makeCronSession(
       makeSessionEntry({
         sessionId: "bound-session",
-        sessionFile: "/tmp/bound-session.jsonl",
       }),
     );
     const changed = adoptCronRunSessionMetadata({
@@ -179,37 +178,31 @@ describe("createPersistCronSessionEntry", () => {
       sessionKey: "agent:main:telegram:direct:42",
       runMeta: {
         sessionId: "bound-session-rotated",
-        sessionFile: "/tmp/bound-session-rotated.jsonl",
       },
     });
-    const updateSessionStore = vi.fn(
-      async (_storePath, update: (store: Record<string, SessionEntry>) => void) => {
-        const store: Record<string, SessionEntry> = {};
-        update(store);
-        expect(store["agent:main:telegram:direct:42"]).toEqual({
-          sessionId: "bound-session-rotated",
-          sessionFile: "/tmp/bound-session-rotated.jsonl",
-          usageFamilyKey: "agent:main:telegram:direct:42",
-          usageFamilySessionIds: ["bound-session", "bound-session-rotated"],
-          updatedAt: 1000,
-          systemSent: true,
-        });
-      },
-    );
+    const persistSessionRow = vi.fn(async (sessionKey: string, entry: SessionEntry) => {
+      expect(sessionKey).toBe("agent:main:telegram:direct:42");
+      expect(entry).toEqual({
+        sessionId: "bound-session-rotated",
+        usageFamilyKey: "agent:main:telegram:direct:42",
+        usageFamilySessionIds: ["bound-session", "bound-session-rotated"],
+        updatedAt: 1000,
+        systemSent: true,
+      });
+    });
 
     expect(changed).toBe(true);
     const persist = createPersistCronSessionEntry({
       isFastTestEnv: false,
       cronSession,
       agentSessionKey: "agent:main:telegram:direct:42",
-      updateSessionStore,
+      persistSessionRow,
     });
 
     await persist();
 
     expect(cronSession.store["agent:main:telegram:direct:42"]).toEqual({
       sessionId: "bound-session-rotated",
-      sessionFile: "/tmp/bound-session-rotated.jsonl",
       usageFamilyKey: "agent:main:telegram:direct:42",
       usageFamilySessionIds: ["bound-session", "bound-session-rotated"],
       updatedAt: 1000,

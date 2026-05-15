@@ -357,7 +357,7 @@ export async function maybeRepairLegacyCronStore(params: {
   if (rawJobs.length === 0 && !hasLegacyStoreFile && !hasLegacyStateSidecar && !hasLegacyRunLogs) {
     return;
   }
-  noteCronModelOverrides({ cfg: params.cfg, jobs: rawJobs, storePath });
+  noteCronModelOverrides({ cfg: params.cfg, jobs: rawJobs, storePath: legacyStorePath });
 
   const normalized = normalizeStoredCronJobs(rawJobs);
   const legacyWebhook = normalizeOptionalString(params.cfg.cron?.webhook);

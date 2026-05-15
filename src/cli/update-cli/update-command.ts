@@ -2778,10 +2778,6 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
   if (timeoutMs === null) {
     return;
   }
-  if (opts.dryRun !== true) {
-    await disableCurrentOpenClawUpdateLaunchdJob().catch(() => undefined);
-    assertConfigWriteAllowedInCurrentMode();
-  }
   const updateStepTimeoutMs = timeoutMs ?? DEFAULT_UPDATE_STEP_TIMEOUT_MS;
 
   let root = await resolveUpdateRoot();
@@ -2893,6 +2889,10 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     defaultRuntime.error(["Config is invalid; cannot set update channel.", ...issues].join("\n"));
     defaultRuntime.exit(1);
     return;
+  }
+  if (opts.dryRun !== true) {
+    await disableCurrentOpenClawUpdateLaunchdJob().catch(() => undefined);
+    assertConfigWriteAllowedInCurrentMode();
   }
 
   const installKind = updateStatus.installKind;

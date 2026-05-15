@@ -8043,7 +8043,7 @@ describe("runCodexAppServerAttempt", () => {
     expect(llmInput).toHaveBeenCalledTimes(1);
     expect(llmOutput).toHaveBeenCalledTimes(1);
     expect(agentEnd).toHaveBeenCalledTimes(1);
-    const [llmOutputPayload] = mockCall(llmOutput, "llm_output") as [
+    const [llmOutputPayload] = llmOutput.mock.calls[0] as [
       {
         assistantTexts?: string[];
         harnessId?: string;
@@ -8061,8 +8061,8 @@ describe("runCodexAppServerAttempt", () => {
     expect(llmOutputPayload.resolvedRef).toBe("codex/gpt-5.4-codex");
     expect(llmOutputPayload.harnessId).toBe("codex");
     expect(llmOutputPayload.runId).toBe("run-1");
-    expect(llmOutputPayload.sessionId).toBe("session-1");
-    const [agentEndPayload] = mockCall(agentEnd, "agent_end") as [
+    expect(llmOutputPayload.sessionId).toBe(sessionId);
+    const [agentEndPayload] = agentEnd.mock.calls[0] as [
       { error?: string; messages?: Array<{ role?: string }>; success?: boolean },
       unknown,
     ];

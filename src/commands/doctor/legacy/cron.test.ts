@@ -105,6 +105,13 @@ function requirePersistedJob(jobs: Array<Record<string, unknown>>, index: number
   return job;
 }
 
+function requireRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`expected ${label}`);
+  }
+  return value as Record<string, unknown>;
+}
+
 function expectNoteContaining(message: string, title: string): void {
   expect(
     noteMock.mock.calls.some(
@@ -174,7 +181,7 @@ describe("maybeRepairLegacyCronStore", () => {
         state: {},
       },
     ]);
-    const prompter = makePrompter(true);
+    const prompter = makePrompter(false);
 
     await maybeRepairLegacyCronStore({
       cfg: {
@@ -189,7 +196,7 @@ describe("maybeRepairLegacyCronStore", () => {
       prompter,
     });
 
-    expect(prompter.confirm).not.toHaveBeenCalled();
+    expect(prompter.confirm).toHaveBeenCalledOnce();
     expectNoteContaining("Cron model overrides detected", "Cron");
     expectNoteContaining("2 jobs set `payload.model`", "Cron");
     expectNoteContaining("Provider namespaces: anthropic=1, openai=1", "Cron");

@@ -74,6 +74,9 @@ function inferCompletionChatTypeFromTarget(to: string | undefined): CompletionCh
   if (normalized.startsWith("group:")) {
     return "group";
   }
+  if (normalized.endsWith("@g.us")) {
+    return "group";
+  }
   if (normalized.startsWith("channel:") || normalized.startsWith("thread:")) {
     return "channel";
   }

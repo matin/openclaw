@@ -73,18 +73,16 @@ export function adoptCronRunSessionMetadata(params: {
   sessionKey: string;
   runMeta?: {
     sessionId?: string;
-    sessionFile?: string;
   };
 }): boolean {
   const nextSessionId = normalizeSessionField(params.runMeta?.sessionId);
-  const nextSessionFile = normalizeSessionField(params.runMeta?.sessionFile);
-  if (!nextSessionFile) {
+  if (!nextSessionId) {
     return false;
   }
 
   let changed = false;
   const previousSessionId = params.entry.sessionId;
-  if (nextSessionId && nextSessionId !== previousSessionId) {
+  if (nextSessionId !== previousSessionId) {
     params.entry.sessionId = nextSessionId;
     params.entry.usageFamilyKey = params.entry.usageFamilyKey ?? params.sessionKey;
     params.entry.usageFamilySessionIds = Array.from(
@@ -94,11 +92,6 @@ export function adoptCronRunSessionMetadata(params: {
         nextSessionId,
       ]),
     );
-    changed = true;
-  }
-
-  if (nextSessionFile !== params.entry.sessionFile) {
-    params.entry.sessionFile = nextSessionFile;
     changed = true;
   }
 
