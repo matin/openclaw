@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { resetConfigRuntimeState } from "../config/config.js";
+import { resetConfigRuntimeState, setRuntimeConfigSnapshot } from "../config/config.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { upsertSessionEntry, type SessionEntry } from "../config/sessions.js";
 import { replaceSqliteSessionTranscriptEvents } from "../config/sessions/transcript-store.sqlite.js";
@@ -20,6 +20,7 @@ import {
   listAgentsForGateway,
   listSessionsFromStore,
   listSessionsFromStoreAsync,
+  loadSessionEntry,
   parseGroupKey,
   resolveDeletedAgentIdFromSessionKey,
   resolveGatewayModelSupportsImages,
@@ -774,9 +775,12 @@ describe("gateway session utils", () => {
         cfg,
         key: "agent:main:archived",
       });
+      setRuntimeConfigSnapshot(cfg);
+      const loaded = loadSessionEntry("agent:main:archived");
 
       expect(target.databasePath).toBe(databasePath);
       expect(target.canonicalKey).toBe("agent:main:archived");
+      expect(loaded.entry?.sessionId).toBe("archived-session");
     } finally {
       closeOpenClawAgentDatabasesForTest();
       closeOpenClawStateDatabaseForTest();

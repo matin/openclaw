@@ -771,13 +771,14 @@ export async function performGatewaySessionReset(params: {
     };
     upsertSessionEntry({
       agentId: target.agentId,
+      path: target.databasePath,
       sessionKey: primaryKey,
       entry: nextEntry,
     });
     deleteOldTranscript = Boolean(
       oldSessionId &&
       oldSessionId !== nextSessionId &&
-      !listSessionEntries({ agentId: target.agentId }).some(
+      !listSessionEntries({ agentId: target.agentId, path: target.databasePath }).some(
         ({ entry }) => entry.sessionId === oldSessionId,
       ),
     );

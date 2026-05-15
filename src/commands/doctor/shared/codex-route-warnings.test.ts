@@ -1,7 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveAgentHarnessPolicy } from "../../../agents/harness/policy.js";
+import { getSessionEntry, upsertSessionEntry } from "../../../config/sessions/store.js";
 import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import {
+  closeOpenClawAgentDatabasesForTest,
+  openOpenClawAgentDatabase,
+} from "../../../state/openclaw-agent-db.js";
+import { closeOpenClawStateDatabaseForTest } from "../../../state/openclaw-state-db.js";
 
 const mocks = vi.hoisted(() => ({
   ensureAuthProfileStore: vi.fn(),
@@ -32,6 +41,7 @@ vi.mock("../../../plugins/installed-plugin-index.js", async (importOriginal) => 
 
 import {
   collectCodexRouteWarnings,
+  maybeRepairCodexSessionRoutes,
   maybeRepairCodexRoutes,
   repairCodexSessionStoreRoutes,
 } from "./codex-route-warnings.js";
@@ -52,6 +62,11 @@ describe("collectCodexRouteWarnings", () => {
     mocks.loadInstalledPluginIndex.mockReturnValue({ plugins: [] });
     mocks.resolveAuthProfileOrder.mockReturnValue([]);
     mocks.resolveProfileUnusableUntilForDisplay.mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    closeOpenClawAgentDatabasesForTest();
+    closeOpenClawStateDatabaseForTest();
   });
 
   it("warns when openai-codex primary models still use the legacy route", () => {
@@ -3245,6 +3260,64 @@ describe("collectCodexRouteWarnings", () => {
     expect(store.main.fallbackNoticeReason).toBeUndefined();
     expect(store.other.updatedAt).toBe(2);
     expect(store.other.agentHarnessId).toBe("codex");
+  });
+
+  it("repairs stale session routes in registered database paths", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-codex-route-db-"));
+    const env = {
+      ...process.env,
+      OPENCLAW_STATE_DIR: path.join(home, "state"),
+    };
+    const databasePath = path.join(home, "relocated", "work.sqlite");
+    const cfg = {
+      agents: {
+        list: [{ id: "work", default: true }],
+      },
+    } as OpenClawConfig;
+    try {
+      openOpenClawAgentDatabase({ agentId: "work", env, path: databasePath });
+      upsertSessionEntry({
+        agentId: "work",
+        env,
+        path: databasePath,
+        sessionKey: "agent:work:task",
+        entry: {
+          sessionId: "s1",
+          updatedAt: 1,
+          modelProvider: "openai-codex",
+          model: "gpt-5.5",
+        },
+      });
+
+      const preview = await maybeRepairCodexSessionRoutes({
+        cfg,
+        env,
+        shouldRepair: false,
+      });
+      expect(preview.warnings).toHaveLength(1);
+      expect(preview.repairedSessions).toBe(0);
+
+      const result = await maybeRepairCodexSessionRoutes({
+        cfg,
+        env,
+        shouldRepair: true,
+      });
+
+      expect(result.repairedSessions).toBe(1);
+      expect(
+        getSessionEntry({
+          agentId: "work",
+          env,
+          path: databasePath,
+          sessionKey: "agent:work:task",
+        }),
+      ).toMatchObject({
+        modelProvider: "openai",
+        model: "gpt-5.5",
+      });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("keeps Codex session auth pins while leaving runtime unpinned", () => {

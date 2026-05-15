@@ -1,6 +1,15 @@
-import { expect, test } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, expect, test } from "vitest";
+import { setRuntimeConfigSnapshot } from "../config/config.js";
 import { getSessionEntry, upsertSessionEntry } from "../config/sessions.js";
 import { replaceSqliteSessionTranscriptEvents } from "../config/sessions/transcript-store.sqlite.js";
+import {
+  closeOpenClawAgentDatabasesForTest,
+  openOpenClawAgentDatabase,
+} from "../state/openclaw-agent-db.js";
+import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { embeddedRunMock, seedGatewaySessionEntries, testState } from "./test-helpers.js";
 import {
   setupGatewaySessionsTestHarness,
@@ -18,6 +27,11 @@ import {
 
 const { seedActiveMainSession } = setupGatewaySessionsTestHarness();
 const legacySessionFileProperty = ["session", "File"].join("");
+
+afterEach(() => {
+  closeOpenClawAgentDatabasesForTest();
+  closeOpenClawStateDatabaseForTest();
+});
 
 type HookEventRecord = Record<string, unknown> & {
   context?: Record<string, unknown> & {
@@ -126,6 +140,62 @@ test("sessions.reset emits before_reset hook with transcript context", async () 
     sessionKey: "agent:main:main",
     sessionId: "sess-main",
   });
+});
+
+test("sessions.reset writes relocated registered session databases", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-reset-db-"));
+  const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+  try {
+    process.env.OPENCLAW_STATE_DIR = path.join(root, "state");
+    const databasePath = path.join(root, "relocated", "work.sqlite");
+    openOpenClawAgentDatabase({ agentId: "work", path: databasePath });
+    setRuntimeConfigSnapshot({
+      agents: {
+        list: [{ id: "work", default: true }],
+      },
+      session: { mainKey: "main" },
+    });
+    upsertSessionEntry({
+      agentId: "work",
+      path: databasePath,
+      sessionKey: "agent:work:task",
+      entry: {
+        sessionId: "sess-old",
+        updatedAt: Date.now(),
+        modelProvider: "openai",
+        model: "gpt-5.5",
+      },
+    });
+
+    const { performGatewaySessionReset } = await import("./session-reset-service.js");
+    const reset = await performGatewaySessionReset({
+      key: "agent:work:task",
+      reason: "new",
+      commandSource: "gateway:sessions.reset",
+    });
+
+    expect(reset.ok).toBe(true);
+    const relocatedEntry = getSessionEntry({
+      agentId: "work",
+      path: databasePath,
+      sessionKey: "agent:work:task",
+    });
+    expect(relocatedEntry?.sessionId).toBe(reset.ok ? reset.entry.sessionId : undefined);
+    expect(relocatedEntry?.sessionId).not.toBe("sess-old");
+    expect(
+      getSessionEntry({
+        agentId: "work",
+        sessionKey: "agent:work:task",
+      }),
+    ).toBeUndefined();
+  } finally {
+    if (previousStateDir === undefined) {
+      delete process.env.OPENCLAW_STATE_DIR;
+    } else {
+      process.env.OPENCLAW_STATE_DIR = previousStateDir;
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("sessions.reset emits before_reset hook with scoped SQLite transcript context", async () => {
