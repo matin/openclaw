@@ -762,33 +762,6 @@ describe("cron tool", () => {
     });
   });
 
-  it("preserves telegram dm thread ids when inferring delivery", async () => {
-    expect(
-      await executeAddAndReadDelivery({
-        callId: "call-telegram-dm-thread",
-        agentSessionKey: "agent:main:telegram:dm:123456789:thread:123456789:99",
-      }),
-    ).toEqual({
-      mode: "announce",
-      channel: "telegram",
-      to: "123456789",
-      threadId: "99",
-    });
-  });
-
-  it("drops mismatched telegram direct-chat thread ids when inferring delivery", async () => {
-    expect(
-      await executeAddAndReadDelivery({
-        callId: "call-telegram-mismatched-direct-thread",
-        agentSessionKey: "agent:main:telegram:direct:123456789:thread:987654321:99",
-      }),
-    ).toEqual({
-      mode: "announce",
-      channel: "telegram",
-      to: "123456789",
-    });
-  });
-
   it("prefers current delivery context over stored session context", async () => {
     extractDeliveryInfoMock.mockReturnValueOnce({
       deliveryContext: {

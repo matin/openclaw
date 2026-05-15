@@ -35,7 +35,7 @@ export function resolveCronStoredDeliveryContext(params: {
   if (!sessionKey) {
     return undefined;
   }
-  const { deliveryContext, threadId } = extractDeliveryInfo(sessionKey, { cfg: params.cfg });
+  const { deliveryContext, threadId } = extractDeliveryInfo(sessionKey);
   if (deliveryContext && threadId) {
     return { ...deliveryContext, threadId };
   }

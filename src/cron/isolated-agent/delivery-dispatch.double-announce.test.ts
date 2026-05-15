@@ -1482,7 +1482,6 @@ describe("dispatchCronDelivery — double-announce guard", () => {
       agentId: "main",
       text: "REPRO_TOKEN_K7M3X9",
       mediaUrls: undefined,
-      storePath: expect.stringContaining("cron-mirror-sessions.json"),
       idempotencyKey: expect.stringContaining("test-job"),
       config: params.cfgWithAgentDefaults,
     });
@@ -1547,7 +1546,6 @@ describe("dispatchCronDelivery — double-announce guard", () => {
       agentId: "main",
       text: "custom-session report",
       mediaUrls: undefined,
-      storePath: expect.stringContaining("cron-custom-session-mirror.json"),
       idempotencyKey: expect.stringContaining("test-job"),
       config: params.cfgWithAgentDefaults,
     });

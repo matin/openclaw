@@ -8,7 +8,6 @@ import {
   stripSilentToken,
 } from "../../auto-reply/tokens.js";
 import type { CliDeps } from "../../cli/outbound-send-deps.js";
-import { resolveStorePath } from "../../config/sessions/inbound.runtime.js";
 import {
   canonicalizeMainSessionAlias,
   resolveAgentMainSessionKey,
@@ -32,11 +31,7 @@ import { normalizeTargetForProvider } from "../../infra/outbound/target-normaliz
 import { hasReplyPayloadContent } from "../../interactive/payload.js";
 import { isAudioFileName } from "../../media/mime.js";
 import { stringifyRouteThreadId } from "../../plugin-sdk/channel-route.js";
-import {
-  isCronSessionKey,
-  parseThreadSessionSuffix,
-  resolveAgentIdFromSessionKey,
-} from "../../routing/session-key.js";
+import { isCronSessionKey, parseThreadSessionSuffix } from "../../routing/session-key.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { shouldAttemptTtsPayload } from "../../tts/tts-config.js";
@@ -657,7 +652,6 @@ async function appendDirectCronDeliveryTranscriptMirror(params: {
     agentId: string;
     text?: string;
     mediaUrls?: string[];
-    storePath?: string;
     idempotencyKey: string;
     config: OpenClawConfig;
   };
@@ -1027,9 +1021,6 @@ export async function dispatchCronDelivery(
           // Keep cron delivery mirrors text-first: non-audio attachment names
           // are folded into mirrorText so media does not replace delivered text.
           mediaUrls: undefined,
-          storePath: resolveStorePath(params.cfgWithAgentDefaults.session?.store, {
-            agentId: resolveAgentIdFromSessionKey(deliverySessionKey),
-          }),
           idempotencyKey: deliveryIdempotencyKey,
           config: params.cfgWithAgentDefaults,
         };

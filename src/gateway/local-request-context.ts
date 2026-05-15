@@ -50,7 +50,7 @@ export function createLocalGatewayRequestContext(
   return {
     deps: params.deps,
     cron: unavailableCron,
-    cronStorePath: "",
+    cronStoreKey: "local-unavailable",
     getRuntimeConfig: params.getRuntimeConfig,
     loadGatewayModelCatalog: async () =>
       loadManifestModelCatalog({ config: params.getRuntimeConfig() }),
