@@ -1,7 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { resolveStateDir } from "../config/paths.js";
 import {
   clearNodeSqliteKyselyCacheForDatabase,
   executeSqliteQuerySync,
@@ -12,6 +11,7 @@ import { runSqliteImmediateTransactionSync } from "../infra/sqlite-transaction.j
 import { configureSqliteWalMaintenance, type SqliteWalMaintenance } from "../infra/sqlite-wal.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import type { DB as OpenClawAgentKyselyDatabase } from "./openclaw-agent-db.generated.js";
+import { resolveOpenClawAgentSqlitePath } from "./openclaw-agent-db.paths.js";
 import { OPENCLAW_AGENT_SCHEMA_SQL } from "./openclaw-agent-schema.generated.js";
 import type { DB as OpenClawStateKyselyDatabase } from "./openclaw-state-db.generated.js";
 import {
@@ -20,6 +20,7 @@ import {
   runOpenClawStateWriteTransaction,
   type OpenClawStateDatabaseOptions,
 } from "./openclaw-state-db.js";
+export { resolveOpenClawAgentSqlitePath } from "./openclaw-agent-db.paths.js";
 
 const OPENCLAW_AGENT_SCHEMA_VERSION = 1;
 const OPENCLAW_AGENT_DB_DIR_MODE = 0o700;
@@ -62,20 +63,6 @@ function assertSupportedAgentSchemaVersion(db: DatabaseSync, pathname: string): 
       `OpenClaw agent database ${pathname} uses newer schema version ${userVersion}; this OpenClaw build supports ${OPENCLAW_AGENT_SCHEMA_VERSION}.`,
     );
   }
-}
-
-export function resolveOpenClawAgentSqlitePath(options: OpenClawAgentDatabaseOptions): string {
-  const agentId = normalizeAgentId(options.agentId);
-  return (
-    options.path ??
-    path.join(
-      resolveStateDir(options.env ?? process.env),
-      "agents",
-      agentId,
-      "agent",
-      "openclaw-agent.sqlite",
-    )
-  );
 }
 
 function ensureOpenClawAgentDatabasePermissions(pathname: string): void {

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { resolveOpenClawAgentSqliteDir } from "../state/openclaw-agent-db.paths.js";
 import { resolveOpenClawStateSqliteDir } from "../state/openclaw-state-db.paths.js";
 import type { PreparedAgentRun } from "./runtime-backend.js";
 
@@ -37,14 +38,21 @@ export function createAgentWorkerPermissionProfile(
 ): AgentWorkerPermissionProfile {
   const mode = options.mode ?? "off";
   const runtimeReadRoots = options.runtimeReadRoots ?? [process.cwd()];
-  const stateDir = resolveOpenClawStateSqliteDir(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  const stateDir = resolveOpenClawStateSqliteDir(env);
+  const agentStateDir = resolveOpenClawAgentSqliteDir({ agentId: preparedRun.agentId, env });
   const workspacePaths =
     preparedRun.filesystemMode === "vfs-only" ? [] : [preparedRun.workspaceDir];
 
   return {
     mode,
-    fsRead: normalizePermissionPaths([...runtimeReadRoots, stateDir, ...workspacePaths]),
-    fsWrite: normalizePermissionPaths([stateDir, ...workspacePaths]),
+    fsRead: normalizePermissionPaths([
+      ...runtimeReadRoots,
+      agentStateDir,
+      stateDir,
+      ...workspacePaths,
+    ]),
+    fsWrite: normalizePermissionPaths([agentStateDir, stateDir, ...workspacePaths]),
     allowWorker: false,
     allowChildProcess: false,
     allowAddons: false,

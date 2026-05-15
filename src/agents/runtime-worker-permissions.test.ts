@@ -42,8 +42,17 @@ describe("agent worker permission profile", () => {
 
     expect(profile).toMatchObject({
       mode: "enforce",
-      fsRead: ["/app/runtime", "/tmp/openclaw-state/state", "/tmp/workspace"],
-      fsWrite: ["/tmp/openclaw-state/state", "/tmp/workspace"],
+      fsRead: [
+        "/app/runtime",
+        "/tmp/openclaw-state/agents/main/agent",
+        "/tmp/openclaw-state/state",
+        "/tmp/workspace",
+      ],
+      fsWrite: [
+        "/tmp/openclaw-state/agents/main/agent",
+        "/tmp/openclaw-state/state",
+        "/tmp/workspace",
+      ],
       allowWorker: false,
       allowChildProcess: false,
       allowAddons: false,
@@ -61,12 +70,21 @@ describe("agent worker permission profile", () => {
       },
     );
 
-    expect(profile.fsRead).toEqual(["/app/runtime", "/tmp/openclaw-state/state"]);
-    expect(profile.fsWrite).toEqual(["/tmp/openclaw-state/state"]);
+    expect(profile.fsRead).toEqual([
+      "/app/runtime",
+      "/tmp/openclaw-state/agents/main/agent",
+      "/tmp/openclaw-state/state",
+    ]);
+    expect(profile.fsWrite).toEqual([
+      "/tmp/openclaw-state/agents/main/agent",
+      "/tmp/openclaw-state/state",
+    ]);
     expect(buildNodePermissionExecArgv(profile)).toEqual([
       "--permission-audit",
       "--allow-fs-read=/app/runtime",
+      "--allow-fs-read=/tmp/openclaw-state/agents/main/agent",
       "--allow-fs-read=/tmp/openclaw-state/state",
+      "--allow-fs-write=/tmp/openclaw-state/agents/main/agent",
       "--allow-fs-write=/tmp/openclaw-state/state",
     ]);
   });
