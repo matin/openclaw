@@ -4,7 +4,7 @@ import { listChannelPluginCatalogEntries } from "../channels/plugins/catalog.js"
 import { listChannelSetupPlugins } from "../channels/plugins/setup-registry.js";
 import type { ChannelSetupPlugin } from "../channels/plugins/setup-wizard-types.js";
 import type { ChannelMeta } from "../channels/plugins/types.core.js";
-import { formatChannelPrimerLine, formatChannelSelectionLine } from "../channels/registry.js";
+import { formatChannelSelectionLine } from "../channels/registry.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import { resolveChannelSetupEntries } from "../commands/channel-setup/discovery.js";
 import { shouldShowChannelInSetup } from "../commands/channel-setup/discovery.js";
@@ -40,6 +40,7 @@ type ChannelSetupSelectionContribution = FlowContribution & {
   surface: "setup";
   channel: ChannelChoice;
   source: "catalog" | "core" | "plugin";
+  onboardingFeatured?: boolean;
 };
 
 type ChannelSetupSelectionEntry = {
@@ -48,6 +49,8 @@ type ChannelSetupSelectionEntry = {
     id: string;
     label: string;
     selectionLabel?: string;
+    blurb?: string;
+    onboardingFeatured?: boolean;
     exposure?: { setup?: boolean };
     showConfigured?: boolean;
     showInSetup?: boolean;
@@ -59,6 +62,7 @@ function buildChannelSetupSelectionContribution(params: {
   label: string;
   hint?: string;
   source: "catalog" | "core" | "plugin";
+  onboardingFeatured?: boolean;
 }): ChannelSetupSelectionContribution {
   return {
     id: `channel:setup:${params.channel}`,
@@ -71,7 +75,43 @@ function buildChannelSetupSelectionContribution(params: {
       ...(params.hint ? { hint: params.hint } : {}),
     },
     source: params.source,
+    ...(params.onboardingFeatured ? { onboardingFeatured: true } : {}),
   };
+}
+
+function extractSelectionLabelQualifier(
+  selectionLabel: string | undefined,
+  label: string,
+): string | undefined {
+  if (!selectionLabel) {
+    return undefined;
+  }
+  const match = /\(([^()]+)\)\s*$/.exec(selectionLabel.trim());
+  if (!match) {
+    return undefined;
+  }
+  const qualifier = match[1].trim();
+  if (!qualifier || qualifier.toLowerCase() === label.trim().toLowerCase()) {
+    return undefined;
+  }
+  return qualifier;
+}
+
+function composeChannelBlurbHint(meta: {
+  label: string;
+  selectionLabel?: string;
+  blurb?: string;
+}): string | undefined {
+  const blurb = (meta.blurb ?? "").trim();
+  const qualifier = extractSelectionLabelQualifier(meta.selectionLabel, meta.label);
+  if (!blurb) {
+    return qualifier || undefined;
+  }
+  if (qualifier && !blurb.toLowerCase().includes(qualifier.toLowerCase())) {
+    const trimmed = blurb.replace(/\.\s*$/, "");
+    return `${trimmed} (${qualifier})`;
+  }
+  return blurb;
 }
 
 function formatSetupSelectionLabel(label: string, fallback: string): string {
@@ -315,21 +355,7 @@ export async function noteChannelStatus(params: {
   }
 }
 
-export async function noteChannelPrimer(
-  prompter: WizardPrompter,
-  channels: Array<{ id: ChannelChoice; blurb: string; label: string }>,
-): Promise<void> {
-  const channelLines = channels.map((channel) =>
-    formatChannelPrimerLine(
-      formatSetupDisplayMeta({
-        id: channel.id,
-        label: channel.label,
-        selectionLabel: channel.label,
-        docsPath: "/",
-        blurb: channel.blurb,
-      }),
-    ),
-  );
+export async function noteChannelPrimer(prompter: WizardPrompter): Promise<void> {
   await prompter.note(
     [
       "Inbound DM safety defaults to pairing: unknown senders get a pairing code first.",
@@ -339,8 +365,6 @@ export async function noteChannelPrimer(
         formatCliCommand('openclaw config set session.dmScope "per-channel-peer"') +
         ' (or "per-account-channel-peer" for multi-account channels).',
       `Docs: ${formatDocsLink("/channels/pairing", "channels/pairing")}`,
-      "",
-      ...channelLines,
     ].join("\n"),
     "How channels work",
   );
@@ -395,12 +419,18 @@ export function resolveChannelSetupSelectionContributions(params: {
     .map((entry) => {
       const disabledHint = params.resolveDisabledHint(entry.id);
       const statusHint = params.statusByChannel.get(entry.id)?.selectionHint;
-      const hint = [statusHint, disabledHint].filter(Boolean).join(" · ") || undefined;
+      const blurbHint = composeChannelBlurbHint({
+        label: entry.meta.label,
+        selectionLabel: entry.meta.selectionLabel,
+        blurb: entry.meta.blurb,
+      });
+      const hint = [blurbHint, statusHint, disabledHint].filter(Boolean).join(" · ") || undefined;
       return buildChannelSetupSelectionContribution({
         channel: entry.id,
-        label: formatSetupSelectionLabel(entry.meta.selectionLabel ?? entry.meta.label, entry.id),
+        label: formatSetupSelectionLabel(entry.meta.label, entry.id),
         hint: formatSetupSelectionHint(hint),
         source: bundledChannelIds.has(entry.id) ? "core" : "plugin",
+        ...(entry.meta.onboardingFeatured ? { onboardingFeatured: true } : {}),
       });
     });
 }

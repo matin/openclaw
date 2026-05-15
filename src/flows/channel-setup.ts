@@ -245,12 +245,7 @@ export async function setupChannels(
     return cfg;
   }
 
-  const primerChannels = resolveVisibleChannelEntries().entries.map((entry) => ({
-    id: entry.id,
-    label: entry.meta.label,
-    blurb: entry.meta.blurb,
-  }));
-  await noteChannelPrimer(prompter, primerChannels);
+  await noteChannelPrimer(prompter);
 
   const quickstartDefault =
     options?.initialSelection?.[0] ??
@@ -751,23 +746,64 @@ export async function setupChannels(
     }
   } else {
     const doneValue = "__done__" as const;
+    const moreValue = "__more__" as const;
+    const backValue = "__back__" as const;
     const initialValue = options?.initialSelection?.[0] ?? quickstartDefault;
-    while (true) {
+    loop: while (true) {
       const { entries, catalogById } = getChannelEntries();
+      const contributions = resolveChannelSetupSelectionContributions({
+        entries,
+        statusByChannel: buildStatusByChannelForSelection(catalogById),
+        resolveDisabledHint,
+      });
+      const featured = contributions.filter((c) => c.onboardingFeatured === true);
+      const useTiered = featured.length > 0;
+      const skipOrFinishedOption = {
+        value: doneValue,
+        label: selection.length > 0 ? "Finished" : "Skip",
+        hint: selection.length > 0 ? "Done" : "Skip for now",
+      };
+      if (useTiered) {
+        const tieredChoice = await prompter.select({
+          message: "Select a channel",
+          options: [
+            ...featured.map((c) => c.option),
+            { value: moreValue, label: "See more…" },
+            skipOrFinishedOption,
+          ],
+          initialValue,
+        });
+        if (tieredChoice === doneValue) {
+          break;
+        }
+        if (tieredChoice !== moreValue) {
+          await handleChannelChoice(tieredChoice);
+          continue;
+        }
+        while (true) {
+          const moreChoice = await prompter.select({
+            message: "Select a channel",
+            options: [
+              ...contributions.map((c) => c.option),
+              { value: backValue, label: "Back" },
+              skipOrFinishedOption,
+            ],
+            searchable: true,
+          });
+          if (moreChoice === doneValue) {
+            break loop;
+          }
+          if (moreChoice === backValue) {
+            break;
+          }
+          await handleChannelChoice(moreChoice);
+          break;
+        }
+        continue;
+      }
       const choice = await prompter.select({
         message: "Select a channel",
-        options: [
-          ...resolveChannelSetupSelectionContributions({
-            entries,
-            statusByChannel: buildStatusByChannelForSelection(catalogById),
-            resolveDisabledHint,
-          }).map((contribution) => contribution.option),
-          {
-            value: doneValue,
-            label: "Finished",
-            hint: selection.length > 0 ? "Done" : "Skip for now",
-          },
-        ],
+        options: [...contributions.map((c) => c.option), skipOrFinishedOption],
         initialValue,
       });
       if (choice === doneValue) {

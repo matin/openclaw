@@ -32,6 +32,7 @@ export function buildManifestChannelMeta(params: {
     docsPath: params.docsPath,
     docsLabel: params.docsLabel,
     blurb: params.blurb,
+    ...(params.channel.onboardingFeatured === true ? { onboardingFeatured: true } : {}),
     ...(hasArrayField(params.channel.aliases) ? { aliases: params.channel.aliases } : {}),
     ...(params.channel.order !== undefined ? { order: params.channel.order } : {}),
     ...(hasSelectionDocsPrefix ? { selectionDocsPrefix: params.channel.selectionDocsPrefix } : {}),

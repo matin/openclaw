@@ -44,6 +44,7 @@
       "docsPath": "/channels/whatsapp",
       "docsLabel": "whatsapp",
       "blurb": "works with your own number; recommend a separate phone + eSIM.",
+      "onboardingFeatured": true,
       "systemImage": "message",
       "persistedAuthState": {
         "specifier": "./auth-presence",

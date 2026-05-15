@@ -31,6 +31,7 @@
       "docsPath": "/channels/telegram",
       "docsLabel": "telegram",
       "blurb": "simplest way to get started — register a bot with @BotFather and get going.",
+      "onboardingFeatured": true,
       "systemImage": "paperplane",
       "selectionDocsPrefix": "",
       "selectionDocsOmitLabel": true,

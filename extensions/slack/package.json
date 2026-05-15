@@ -40,6 +40,7 @@
       "docsPath": "/channels/slack",
       "docsLabel": "slack",
       "blurb": "supported (Socket Mode).",
+      "onboardingFeatured": true,
       "systemImage": "number",
       "markdownCapable": true,
       "commands": {

@@ -13,10 +13,6 @@ type FormatChannelSelectionLine =
   typeof import("../channels/registry.js").formatChannelSelectionLine;
 type IsChannelConfigured = typeof import("../config/channel-configured.js").isChannelConfigured;
 type ChannelSetupStatusModule = typeof import("./channel-setup.status.js");
-type NoteChannelPrimerChannels = Parameters<
-  typeof import("./channel-setup.status.js").noteChannelPrimer
->[1];
-
 const listChatChannels = vi.hoisted(() => vi.fn<ListChatChannels>(() => []));
 const resolveChannelSetupEntries = vi.hoisted(() =>
   vi.fn<ResolveChannelSetupEntries>(() => ({
@@ -145,9 +141,9 @@ describe("resolveChannelSetupSelectionContributions", () => {
     });
 
     expect(contributions.map((contribution) => contribution.option.label)).toEqual([
-      "Discord (Bot API)",
-      "iMessage (macOS app)",
-      "Zalo (Bot API)",
+      "Discord",
+      "iMessage",
+      "Zalo",
     ]);
   });
 
@@ -170,7 +166,8 @@ describe("resolveChannelSetupSelectionContributions", () => {
     expect(contributions.map((contribution) => contribution.option)).toEqual([
       {
         value: "zalo",
-        label: "Zalo (Bot API)",
+        label: "Zalo",
+        hint: "Bot API",
       },
     ]);
   });
@@ -193,8 +190,8 @@ describe("resolveChannelSetupSelectionContributions", () => {
 
     expect(contributions[0]?.option).toEqual({
       value: "zalo",
-      label: "Zalo (Bot API)",
-      hint: "configured · disabled",
+      label: "Zalo",
+      hint: "Bot API · configured · disabled",
     });
   });
 
@@ -218,6 +215,81 @@ describe("resolveChannelSetupSelectionContributions", () => {
       label: "Zalo\\nBot",
       hint: "configured\\nnow · disabled",
     });
+  });
+
+  it("renders the channel blurb as the picker hint", () => {
+    const contributions = resolveChannelSetupSelectionContributions({
+      entries: [
+        {
+          id: "telegram",
+          meta: {
+            id: "telegram",
+            label: "Telegram",
+            selectionLabel: "Telegram (Bot API)",
+            blurb: "simplest way to get started — register a bot with @BotFather and get going.",
+          },
+        },
+      ],
+      statusByChannel: new Map(),
+      resolveDisabledHint: () => undefined,
+    });
+
+    expect(contributions[0]?.option).toEqual({
+      value: "telegram",
+      label: "Telegram",
+      hint: "simplest way to get started — register a bot with @BotFather and get going (Bot API)",
+    });
+  });
+
+  it("does not duplicate a selection-label qualifier already present in the blurb", () => {
+    const contributions = resolveChannelSetupSelectionContributions({
+      entries: [
+        {
+          id: "slack",
+          meta: {
+            id: "slack",
+            label: "Slack",
+            selectionLabel: "Slack (Socket Mode)",
+            blurb: "supported (Socket Mode).",
+          },
+        },
+      ],
+      statusByChannel: new Map(),
+      resolveDisabledHint: () => undefined,
+    });
+
+    expect(contributions[0]?.option.hint).toBe("supported (Socket Mode).");
+  });
+
+  it("propagates onboardingFeatured to the contribution", () => {
+    const contributions = resolveChannelSetupSelectionContributions({
+      entries: [
+        {
+          id: "whatsapp",
+          meta: {
+            id: "whatsapp",
+            label: "WhatsApp",
+            selectionLabel: "WhatsApp (QR link)",
+            blurb: "works with your own number.",
+            onboardingFeatured: true,
+          },
+        },
+        {
+          id: "zalo",
+          meta: {
+            id: "zalo",
+            label: "Zalo",
+          },
+        },
+      ],
+      statusByChannel: new Map(),
+      resolveDisabledHint: () => undefined,
+    });
+
+    const whatsapp = contributions.find((c) => c.channel === "whatsapp");
+    const zalo = contributions.find((c) => c.channel === "zalo");
+    expect(whatsapp?.onboardingFeatured).toBe(true);
+    expect(zalo?.onboardingFeatured).toBeUndefined();
   });
 
   it("sanitizes the picker fallback label when metadata sanitizes to empty", () => {
@@ -263,26 +335,12 @@ describe("resolveChannelSetupSelectionContributions", () => {
     ]);
   });
 
-  it("sanitizes channel metadata before primer notes", async () => {
+  it("renders the generic primer without per-channel blurbs", async () => {
     const note = vi.fn(async () => undefined);
 
-    await noteChannelPrimer(
-      { note } as never,
-      [
-        {
-          id: "bad\u001B[31m\nid",
-          label: "\u001B[31m\u0007",
-          blurb: "Blurb\u001B[2K\nline\u0007",
-        } satisfies NoteChannelPrimerChannels[number],
-      ] as NoteChannelPrimerChannels,
-    );
+    await noteChannelPrimer({ note } as never);
 
-    expect(formatChannelPrimerLine).toHaveBeenCalledOnce();
-    const [primerMeta] = requireFirstMockCall(formatChannelPrimerLine.mock.calls, "primer line");
-    expect(primerMeta?.id).toBe("bad\\nid");
-    expect(primerMeta?.label).toBe("bad\\nid");
-    expect(primerMeta?.selectionLabel).toBe("bad\\nid");
-    expect(primerMeta?.blurb).toBe("Blurb\\nline");
+    expect(formatChannelPrimerLine).not.toHaveBeenCalled();
     expect(note).toHaveBeenCalledWith(
       [
         "Inbound DM safety defaults to pairing: unknown senders get a pairing code first.",
@@ -290,8 +348,6 @@ describe("resolveChannelSetupSelectionContributions", () => {
         'Open/public DMs require dmPolicy="open" plus allowFrom=["*"].',
         'For multi-user DMs, isolate sessions with: openclaw config set session.dmScope "per-channel-peer" (or "per-account-channel-peer" for multi-account channels).',
         "Docs: https://docs.openclaw.ai/channels/pairing",
-        "",
-        "bad\\nid: Blurb\\nline",
       ].join("\n"),
       "How channels work",
     );

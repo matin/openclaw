@@ -717,8 +717,9 @@ describe("setupChannels", () => {
 
     const primerMessage =
       note.mock.calls.find(([, title]) => title === "How channels work")?.[0] ?? "";
-    expect(primerMessage).toContain("external-chat:");
+    expect(primerMessage).not.toContain("external-chat:");
     expect(primerMessage).not.toContain("undefined: undefined");
+    expect(primerMessage).toContain('config set session.dmScope "per-channel-peer"');
     expect(multiselect).not.toHaveBeenCalled();
   });
 

@@ -1708,6 +1708,7 @@ export type PluginPackageChannel = {
   docsPath?: string;
   docsLabel?: string;
   blurb?: string;
+  onboardingFeatured?: boolean;
   order?: number;
   aliases?: readonly string[];
   preferOver?: readonly string[];

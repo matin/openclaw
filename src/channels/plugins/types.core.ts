@@ -167,6 +167,7 @@ export type ChannelMeta = {
   docsPath: string;
   docsLabel?: string;
   blurb: string;
+  onboardingFeatured?: boolean;
   order?: number;
   aliases?: readonly string[];
   selectionDocsPrefix?: string;
