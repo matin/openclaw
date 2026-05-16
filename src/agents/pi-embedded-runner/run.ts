@@ -66,7 +66,6 @@ import {
   shouldPreferExplicitConfigApiKeyAuth,
 } from "../model-auth.js";
 import { ensureOpenClawModelCatalog } from "../models-config.js";
-import { resolveContextConfigProviderForRuntime } from "../openai-codex-routing.js";
 import {
   OPENAI_CODEX_PROVIDER_ID,
   listOpenAIAuthProfileProvidersForAgentRuntime,

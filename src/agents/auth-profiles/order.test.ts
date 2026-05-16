@@ -304,7 +304,7 @@ describe("resolveAuthProfileOrder", () => {
     expect(order).toEqual([]);
   });
 
-  it("preserves native Codex profiles before OpenAI alias API-key order", async () => {
+  it("respects friendly OpenAI alias API-key order when Codex auth is selected", async () => {
     const store: AuthProfileStore = {
       version: 1,
       profiles: {
@@ -335,7 +335,7 @@ describe("resolveAuthProfileOrder", () => {
       provider: "openai-codex",
     });
 
-    expect(order).toEqual(["openai-codex:personal", "openai:default"]);
+    expect(order).toEqual(["openai:default"]);
   });
 
   it("keeps Codex profiles listed in the friendly OpenAI order for Codex auth", async () => {
