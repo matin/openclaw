@@ -290,6 +290,49 @@ describe("SQLite session transcript store", () => {
     ).toBe(8);
   });
 
+  it("preserves event timestamps when replacing transcript rows", () => {
+    const stateDir = createTempDir();
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    const sessionStartedAt = Date.parse("2026-02-05T10:00:00.000Z");
+    const lastMessageAt = Date.parse("2026-02-05T10:05:00.000Z");
+
+    replaceSqliteSessionTranscriptEvents({
+      env,
+      agentId: "main",
+      sessionId: "session-1",
+      events: [
+        {
+          type: "session",
+          id: "session-1",
+        },
+        {
+          type: "message",
+          id: "m1",
+          timestamp: "2026-02-05T10:00:00.000Z",
+          message: { role: "user", content: "hi" },
+        },
+        {
+          type: "message",
+          id: "m2",
+          timestamp: "2026-02-05T10:05:00.000Z",
+          message: { role: "assistant", content: "ok" },
+        },
+      ],
+      now: () => Date.parse("2026-02-10T00:00:00.000Z"),
+    });
+
+    expect(
+      loadSqliteSessionTranscriptEvents({
+        env,
+        agentId: "main",
+        sessionId: "session-1",
+      }).map((entry) => entry.createdAt),
+    ).toEqual([sessionStartedAt, sessionStartedAt, lastMessageAt]);
+    expect(listSqliteSessionTranscripts({ env, agentId: "main" })[0]?.updatedAt).toBe(
+      lastMessageAt,
+    );
+  });
+
   it("lists SQLite transcript scopes", () => {
     const stateDir = createTempDir();
     const env = { OPENCLAW_STATE_DIR: stateDir };

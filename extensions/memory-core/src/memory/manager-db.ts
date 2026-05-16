@@ -30,7 +30,7 @@ export function openMemoryDatabaseAtPath(
   // failing immediately with SQLITE_BUSY.
   db.exec(`PRAGMA busy_timeout = ${MEMORY_SQLITE_BUSY_TIMEOUT_MS}`);
   if (agentId) {
-    ensureOpenClawAgentDatabaseSchema(db, { agentId, path: dbPath, register: true });
+    ensureOpenClawAgentDatabaseSchema(db, { agentId, path: dbPath, register: false });
   }
   return db;
 }

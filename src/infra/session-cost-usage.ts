@@ -491,9 +491,6 @@ export async function discoverAllSessions(params?: {
     if (params?.startMs && transcript.updatedAt < params.startMs) {
       continue;
     }
-    if (params?.endMs && transcript.updatedAt > params.endMs) {
-      continue;
-    }
     let firstUserMessage: string | undefined;
     if (params?.includeFirstUserMessage !== false) {
       for (const event of loadSqliteSessionTranscriptEvents(transcript)) {

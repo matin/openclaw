@@ -107,6 +107,30 @@ function parseCreatedAt(value: unknown): number {
   return typeof value === "bigint" ? Number(value) : Number(value);
 }
 
+function parseTranscriptTimestampMs(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function readTranscriptEventTimestampMs(event: unknown): number | undefined {
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    return undefined;
+  }
+  const record = event as Record<string, unknown>;
+  return (
+    parseTranscriptTimestampMs(record.timestamp) ??
+    (record.message && typeof record.message === "object"
+      ? parseTranscriptTimestampMs((record.message as Record<string, unknown>).timestamp)
+      : undefined)
+  );
+}
+
 function parseTranscriptEventRow(row: {
   seq: number | bigint;
   event_json: unknown;
@@ -633,16 +657,34 @@ export function replaceSqliteSessionTranscriptEvents(
 ): { replaced: number } {
   const { sessionId } = normalizeTranscriptScope(options);
   const now = options.now?.() ?? Date.now();
+  const timestamps = options.events.map(readTranscriptEventTimestampMs);
+  let fallbackCreatedAt = timestamps.find((timestamp) => timestamp !== undefined) ?? now;
+  const entries = options.events.map((event, seq) => {
+    const createdAt = timestamps[seq] ?? fallbackCreatedAt;
+    fallbackCreatedAt = createdAt;
+    return {
+      event,
+      seq,
+      createdAt,
+    };
+  });
+  const updatedAt = entries.length > 0 ? Math.max(...entries.map((entry) => entry.createdAt)) : now;
   runOpenClawAgentWriteTransaction((database) => {
-    ensureTranscriptSessionRoot({ database, sessionId, updatedAt: now });
+    ensureTranscriptSessionRoot({ database, sessionId, updatedAt });
     executeSqliteQuerySync(
       database.db,
       getAgentTranscriptKysely(database.db)
         .deleteFrom("transcript_events")
         .where("session_id", "=", sessionId),
     );
-    options.events.forEach((event, seq) => {
-      insertTranscriptEvent({ database, sessionId, seq, event, createdAt: now });
+    entries.forEach((entry) => {
+      insertTranscriptEvent({
+        database,
+        sessionId,
+        seq: entry.seq,
+        event: entry.event,
+        createdAt: entry.createdAt,
+      });
     });
   }, options);
 

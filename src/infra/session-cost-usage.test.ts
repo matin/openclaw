@@ -121,6 +121,38 @@ describe("session cost usage", () => {
     });
   });
 
+  it("discovers sessions that continued after the requested end", async () => {
+    const root = await makeRoot("discover-continued");
+    await withStateDir(root, async () => {
+      writeTranscript({
+        sessionId: "sess-continued",
+        events: [
+          {
+            type: "message",
+            timestamp: "2026-02-05T12:00:00.000Z",
+            message: { role: "user", content: "Summarize this range" },
+          },
+          {
+            type: "message",
+            timestamp: "2026-02-07T12:00:00.000Z",
+            message: { role: "assistant", content: "continued" },
+          },
+        ],
+      });
+
+      const sessions = await discoverAllSessions({
+        startMs: Date.parse("2026-02-05T00:00:00.000Z"),
+        endMs: Date.parse("2026-02-06T00:00:00.000Z"),
+      });
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]).toMatchObject({
+        agentId: "main",
+        sessionId: "sess-continued",
+        firstUserMessage: "Summarize this range",
+      });
+    });
+  });
+
   it("loads aggregate usage directly from SQLite transcript events", async () => {
     const root = await makeRoot("aggregate");
     await withStateDir(root, async () => {

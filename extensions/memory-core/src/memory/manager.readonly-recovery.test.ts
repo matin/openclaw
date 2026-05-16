@@ -3,6 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/memory-core-host-engine-foundation";
+import {
+  closeOpenClawStateDatabaseForTest,
+  openOpenClawStateDatabase,
+} from "openclaw/plugin-sdk/sqlite-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MEMORY_SQLITE_BUSY_TIMEOUT_MS, openMemoryDatabaseAtPath } from "./manager-db.js";
 import {
@@ -158,6 +162,7 @@ describe("memory manager readonly recovery", () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    closeOpenClawStateDatabaseForTest();
     await fs.rm(workspaceDir, { recursive: true, force: true });
   });
 
@@ -233,6 +238,20 @@ describe("memory manager readonly recovery", () => {
     expect(foreignKeysRow?.foreign_keys).toBe(1);
     expect(synchronousRow?.synchronous).toBe(1);
     db.close();
+  });
+
+  it("does not register memory sqlite as the agent transcript database", () => {
+    vi.stubEnv("OPENCLAW_STATE_DIR", path.join(workspaceDir, ".state"));
+
+    const db = openMemoryDatabaseAtPath(indexPath, false, "main");
+    db.close();
+
+    const stateDb = openOpenClawStateDatabase().db;
+    const registered = stateDb
+      .prepare("SELECT path FROM agent_databases WHERE agent_id = ?")
+      .get("main");
+
+    expect(registered).toBeUndefined();
   });
 
   it("queues targeted session scopes behind an in-flight sync", async () => {
