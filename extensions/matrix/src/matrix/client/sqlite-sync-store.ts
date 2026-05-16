@@ -13,6 +13,7 @@ import { createPluginBlobSyncStore } from "openclaw/plugin-sdk/plugin-state-runt
 import { isRecord } from "../../record-shared.js";
 import { createAsyncLock } from "../async-lock.js";
 import { LogService } from "../sdk/logger.js";
+import { resolveStateDirFromMatrixStorageRoot } from "./storage-meta-state.js";
 import { claimCurrentTokenStorageState } from "./storage.js";
 
 const STORE_VERSION = 1;
@@ -34,10 +35,14 @@ type PersistedMatrixSyncStoreMetadata = {
   payloadBytes: number;
 };
 
-const SYNC_STORE = createPluginBlobSyncStore<PersistedMatrixSyncStoreMetadata>("matrix", {
-  namespace: MATRIX_SYNC_STORE_NAMESPACE,
-  maxEntries: 1000,
-});
+function createMatrixSyncStore(rootDir: string) {
+  const stateDir = resolveStateDirFromMatrixStorageRoot(rootDir);
+  return createPluginBlobSyncStore<PersistedMatrixSyncStoreMetadata>("matrix", {
+    namespace: MATRIX_SYNC_STORE_NAMESPACE,
+    maxEntries: 1000,
+    ...(stateDir ? { env: { ...process.env, OPENCLAW_STATE_DIR: stateDir } } : {}),
+  });
+}
 
 function normalizeRoomsData(value: unknown): IRooms | null {
   if (!isRecord(value)) {
@@ -157,14 +162,16 @@ export class SqliteBackedMatrixSyncStore extends MemoryStore {
   private dirty = false;
   private persistTimer: NodeJS.Timeout | null = null;
   private persistPromise: Promise<void> | null = null;
+  private readonly syncStore: ReturnType<typeof createMatrixSyncStore>;
 
   constructor(private readonly rootDir: string) {
     super();
+    this.syncStore = createMatrixSyncStore(rootDir);
 
     let restoredSavedSync: ISyncData | null = null;
     let restoredClientOptions: IStoredClientOpts | undefined;
     let restoredCleanShutdown = false;
-    const persisted = SYNC_STORE.lookup(resolveMatrixSyncStoreKey(this.rootDir));
+    const persisted = this.syncStore.lookup(resolveMatrixSyncStoreKey(this.rootDir));
     const persistedPayload = persisted
       ? parsePersistedMatrixSyncStore(persisted.blob.toString("utf8"))
       : null;
@@ -247,7 +254,7 @@ export class SqliteBackedMatrixSyncStore extends MemoryStore {
     this.savedSync = null;
     this.savedClientOptions = undefined;
     this.cleanShutdown = false;
-    SYNC_STORE.delete(resolveMatrixSyncStoreKey(this.rootDir));
+    this.syncStore.delete(resolveMatrixSyncStoreKey(this.rootDir));
   }
 
   markCleanShutdown(): void {
@@ -296,7 +303,7 @@ export class SqliteBackedMatrixSyncStore extends MemoryStore {
     const blob = Buffer.from(JSON.stringify(payload));
     try {
       await this.persistLock(async () => {
-        SYNC_STORE.register(
+        this.syncStore.register(
           resolveMatrixSyncStoreKey(this.rootDir),
           {
             version: STORE_VERSION,

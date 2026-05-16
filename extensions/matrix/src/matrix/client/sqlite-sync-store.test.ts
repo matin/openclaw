@@ -129,6 +129,29 @@ describe("SqliteBackedMatrixSyncStore", () => {
     expect(secondStore.hasSavedSyncFromCleanShutdown()).toBe(false);
   });
 
+  it("routes explicit storage roots through their owning state database", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-matrix-sync-store-"));
+    tempDirs.push(tempDir);
+    const storageRoot = path.join(
+      tempDir,
+      "actual-state",
+      "matrix",
+      "accounts",
+      "default",
+      "matrix.example.org__bot",
+      "token-hash",
+    );
+    vi.stubEnv("OPENCLAW_STATE_DIR", path.join(tempDir, "ambient-state-a"));
+
+    const firstStore = new SqliteBackedMatrixSyncStore(storageRoot);
+    await firstStore.setSyncData(createSyncResponse("owned-state"));
+    await firstStore.flush();
+
+    vi.stubEnv("OPENCLAW_STATE_DIR", path.join(tempDir, "ambient-state-b"));
+    const secondStore = new SqliteBackedMatrixSyncStore(storageRoot);
+    await expect(secondStore.getSavedSyncToken()).resolves.toBe("owned-state");
+  });
+
   it("claims current-token storage ownership when sync state is persisted", async () => {
     const storageRoot = createStorageRoot();
     writeMatrixStorageMetadata(storageRoot, {

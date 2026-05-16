@@ -25,7 +25,7 @@ export function resolveMatrixStorageMetaKey(rootDir: string): string {
   return createHash("sha256").update(path.resolve(rootDir), "utf8").digest("hex").slice(0, 32);
 }
 
-function resolveStateDirFromMatrixStorageRoot(rootDir: string): string | undefined {
+export function resolveStateDirFromMatrixStorageRoot(rootDir: string): string | undefined {
   const parts = path.resolve(rootDir).split(path.sep);
   const matrixIndex = parts.lastIndexOf("matrix");
   if (matrixIndex <= 0) {
