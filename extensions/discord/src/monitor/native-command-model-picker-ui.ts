@@ -262,10 +262,12 @@ export function resolveDiscordModelPickerCurrentRuntime(params: {
   route: ResolvedAgentRoute;
 }): string {
   try {
-    const storePath = resolveStorePath(params.cfg.session?.store, {
-      agentId: params.route.agentId,
-    });
-    const sessionStore = loadSessionStore(storePath, { skipCache: true });
+    const sessionStore = Object.fromEntries(
+      listSessionEntries({ agentId: params.route.agentId }).map(({ sessionKey, entry }) => [
+        sessionKey,
+        entry,
+      ]),
+    );
     const sessionRuntime = normalizeOptionalString(
       sessionStore[params.route.sessionKey]?.agentRuntimeOverride,
     );

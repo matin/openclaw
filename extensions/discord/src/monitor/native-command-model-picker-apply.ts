@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ChatCommandDefinition, CommandArgs } from "openclaw/plugin-sdk/command-auth-native";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { applyModelOverrideToSessionEntry } from "openclaw/plugin-sdk/model-session-runtime";
@@ -34,14 +35,19 @@ async function persistDiscordModelPickerOverride(params: {
   provider: string;
   model: string;
   isDefault: boolean;
+  selectedRuntime?: string;
 }): Promise<boolean> {
   let persisted = false;
   await patchSessionEntry({
     agentId: params.route.agentId,
     sessionKey: params.route.sessionKey,
+    fallbackEntry: {
+      sessionId: randomUUID(),
+      updatedAt: Date.now(),
+    },
     update: (entry) => {
       const next = { ...entry };
-      const updated = applyModelOverrideToSessionEntry({
+      let updated = applyModelOverrideToSessionEntry({
         entry: next,
         selection: {
           provider: params.provider,
@@ -50,6 +56,18 @@ async function persistDiscordModelPickerOverride(params: {
         },
         markLiveSwitchPending: true,
       }).updated;
+      const runtime = params.selectedRuntime?.trim();
+      if (runtime && runtime !== "auto" && runtime !== "default") {
+        if (next.agentRuntimeOverride !== runtime) {
+          next.agentRuntimeOverride = runtime;
+          delete next.agentHarnessId;
+          updated = true;
+        }
+      } else if (runtime && next.agentRuntimeOverride) {
+        delete next.agentRuntimeOverride;
+        delete next.agentHarnessId;
+        updated = true;
+      }
       persisted = updated || persisted;
       return updated ? next : null;
     },
@@ -70,6 +88,7 @@ export async function applyDiscordModelPickerSelection(params: {
   resolvedModelRef: string;
   selectedProvider: string;
   selectedModel: string;
+  selectedRuntime?: string;
   defaultProvider: string;
   defaultModel: string;
   preferenceScope: DiscordModelPickerPreferenceScope;
@@ -118,6 +137,7 @@ export async function applyDiscordModelPickerSelection(params: {
           route: fallbackRoute,
           provider: params.selectedProvider,
           model: params.selectedModel,
+          selectedRuntime: params.selectedRuntime,
           isDefault:
             params.selectedProvider === params.defaultProvider &&
             params.selectedModel === params.defaultModel,

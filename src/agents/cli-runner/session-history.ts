@@ -166,6 +166,16 @@ export async function loadCliSessionHistoryMessages(params: {
   return limitAgentHookHistoryMessages(history, MAX_CLI_SESSION_HISTORY_MESSAGES);
 }
 
+export async function hasCliSessionTranscript(params: {
+  sessionId: string;
+  sessionFile?: string;
+  sessionKey?: string;
+  agentId?: string;
+  config?: OpenClawConfig;
+}): Promise<boolean> {
+  return (await loadCliSessionEntries(params)).length > 0;
+}
+
 export async function loadCliSessionReseedMessages(params: {
   sessionId: string;
   sessionKey?: string;

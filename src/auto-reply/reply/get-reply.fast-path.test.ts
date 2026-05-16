@@ -283,26 +283,24 @@ describe("getReplyFromConfig fast test bootstrap", () => {
 
   it("sanitizes stale heartbeat pending delivery before replay", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-heartbeat-pending-sanitize-"));
-    const storePath = path.join(home, "sessions.json");
+    vi.stubEnv("OPENCLAW_STATE_DIR", home);
     const sessionKey = "agent:main:telegram:123";
-    await fs.writeFile(
-      storePath,
-      JSON.stringify({
-        [sessionKey]: {
-          sessionId: "pending-dirty-remainder",
-          updatedAt: Date.now(),
-          pendingFinalDelivery: true,
-          pendingFinalDeliveryText: [
-            "HEARTBEAT_OK",
-            INTERNAL_RUNTIME_CONTEXT_BEGIN,
-            "internal recovery detail",
-            INTERNAL_RUNTIME_CONTEXT_END,
-            "notify the user",
-          ].join("\n"),
-        },
-      }),
-      "utf8",
-    );
+    upsertSessionEntry({
+      agentId: "main",
+      sessionKey,
+      entry: {
+        sessionId: "pending-dirty-remainder",
+        updatedAt: Date.now(),
+        pendingFinalDelivery: true,
+        pendingFinalDeliveryText: [
+          "HEARTBEAT_OK",
+          INTERNAL_RUNTIME_CONTEXT_BEGIN,
+          "internal recovery detail",
+          INTERNAL_RUNTIME_CONTEXT_END,
+          "notify the user",
+        ].join("\n"),
+      },
+    });
     const cfg = withFastReplyConfig({
       agents: {
         defaults: {
@@ -311,16 +309,15 @@ describe("getReplyFromConfig fast test bootstrap", () => {
           heartbeat: { ackMaxChars: 0 },
         },
       },
-      session: { store: storePath },
     } as OpenClawConfig);
 
     await expect(
       getReplyFromConfig(buildGetReplyCtx(), { isHeartbeat: true }, cfg),
     ).resolves.toEqual({ text: "notify the user" });
 
-    const stored = JSON.parse(await fs.readFile(storePath, "utf8"))[sessionKey];
-    expect(stored.pendingFinalDeliveryText).toBe("notify the user");
-    expect(stored.pendingFinalDeliveryAttemptCount).toBe(1);
+    const stored = getSessionEntry({ agentId: "main", sessionKey });
+    expect(stored?.pendingFinalDeliveryText).toBe("notify the user");
+    expect(stored?.pendingFinalDeliveryAttemptCount).toBe(1);
   });
 
   it("handles native /status before workspace bootstrap", async () => {

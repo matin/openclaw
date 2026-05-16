@@ -25,7 +25,7 @@ export function createCodexTrajectoryRecorder(
 ): CodexTrajectoryRecorder | null {
   return createTrajectoryRuntimeRecorder({
     cfg: params.attempt.config,
-    env: params.env,
+    env: params.env ? { ...process.env, ...params.env } : process.env,
     runId: params.attempt.runId,
     agentId: params.attempt.agentId,
     sessionId: params.attempt.sessionId,

@@ -5,9 +5,10 @@
 
 import type { ColumnType } from "kysely";
 
-export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
-  ? ColumnType<S, I | undefined, U>
-  : ColumnType<T, T | undefined, T>;
+export type Generated<T> =
+  T extends ColumnType<infer S, infer I, infer U>
+    ? ColumnType<S, I | undefined, U>
+    : ColumnType<T, T | undefined, T>;
 
 export interface AcpReplayEvents {
   at: number;
@@ -456,6 +457,8 @@ export interface GatewayRestartHandoff {
   pid: number;
   process_instance_id: string | null;
   reason: string | null;
+  restart_trace_last_at: number | null;
+  restart_trace_started_at: number | null;
   restart_kind: string;
   source: string;
   supervisor_mode: string;

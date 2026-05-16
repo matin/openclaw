@@ -508,6 +508,8 @@ CREATE TABLE IF NOT EXISTS gateway_restart_handoff (
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
   reason TEXT,
+  restart_trace_started_at INTEGER,
+  restart_trace_last_at INTEGER,
   source TEXT NOT NULL,
   restart_kind TEXT NOT NULL,
   supervisor_mode TEXT NOT NULL,

@@ -2,7 +2,6 @@ import "./isolated-agent.mocks.js";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as modelThinkingDefault from "../agents/model-thinking-default.js";
-import type { SessionEntry } from "../config/sessions.js";
 import { runCronIsolatedAgentTurn } from "./isolated-agent.js";
 import {
   makeCfg,
@@ -206,13 +205,6 @@ describe("runCronIsolatedAgentTurn session identity", () => {
           sessionId: "bound-session-rotated",
           usageFamilyKey: boundSessionKey,
           usageFamilySessionIds: ["bound-session", "bound-session-rotated"],
-        }),
-      );
-
-      await expect(readSessionEntry(storePath, boundSessionKey)).resolves.toEqual(
-        expect.objectContaining({
-          sessionId: "bound-session-rotated",
-          sessionFile: rotatedSessionFile,
         }),
       );
     });

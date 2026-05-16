@@ -48,6 +48,10 @@ export type GatewayRestartHandoff = {
   createdAt: number;
   expiresAt: number;
   reason?: string;
+  restartTrace?: {
+    startedAt: number;
+    lastAt: number;
+  };
   source: GatewayRestartHandoffSource;
   restartKind: GatewayRestartHandoffRestartKind;
   supervisorMode: GatewayRestartHandoffSupervisorMode;
@@ -138,6 +142,25 @@ function normalizeTtlMs(value: number | undefined): number {
   return Math.min(Math.floor(value), GATEWAY_RESTART_HANDOFF_TTL_MS);
 }
 
+function normalizeRestartTrace(value: unknown): GatewayRestartHandoff["restartTrace"] | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const startedAt = value.startedAt;
+  const lastAt = value.lastAt;
+  if (
+    typeof startedAt !== "number" ||
+    !Number.isFinite(startedAt) ||
+    startedAt < 0 ||
+    typeof lastAt !== "number" ||
+    !Number.isFinite(lastAt) ||
+    lastAt < startedAt
+  ) {
+    return undefined;
+  }
+  return { startedAt: Math.floor(startedAt), lastAt: Math.floor(lastAt) };
+}
+
 function normalizeSource(
   source: GatewayRestartHandoffSource | undefined,
   reason: string | undefined,
@@ -223,6 +246,7 @@ function parseGatewayRestartHandoff(parsed: unknown): GatewayRestartHandoff | nu
 
   const processInstanceId = normalizeText(parsed.processInstanceId, MAX_PROCESS_INSTANCE_ID_LENGTH);
   const reason = normalizeText(parsed.reason, MAX_REASON_LENGTH);
+  const restartTrace = normalizeRestartTrace(parsed.restartTrace);
   return {
     kind: GATEWAY_SUPERVISOR_RESTART_HANDOFF_KIND,
     version: 1,
@@ -232,6 +256,7 @@ function parseGatewayRestartHandoff(parsed: unknown): GatewayRestartHandoff | nu
     createdAt: Math.floor(parsed.createdAt),
     expiresAt: Math.floor(parsed.expiresAt),
     ...(reason ? { reason } : {}),
+    ...(restartTrace ? { restartTrace } : {}),
     source: parsed.source,
     restartKind: parsed.restartKind,
     supervisorMode: parsed.supervisorMode,
@@ -249,6 +274,8 @@ function gatewayRestartHandoffToRow(payload: GatewayRestartHandoff): GatewayRest
     created_at: payload.createdAt,
     expires_at: payload.expiresAt,
     reason: payload.reason ?? null,
+    restart_trace_started_at: payload.restartTrace?.startedAt ?? null,
+    restart_trace_last_at: payload.restartTrace?.lastAt ?? null,
     source: payload.source,
     restart_kind: payload.restartKind,
     supervisor_mode: payload.supervisorMode,
@@ -266,6 +293,14 @@ function rowToGatewayRestartHandoff(row: GatewayRestartHandoffRow): GatewayResta
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     ...(row.reason ? { reason: row.reason } : {}),
+    ...(row.restart_trace_started_at !== null && row.restart_trace_last_at !== null
+      ? {
+          restartTrace: {
+            startedAt: row.restart_trace_started_at,
+            lastAt: row.restart_trace_last_at,
+          },
+        }
+      : {}),
     source: row.source,
     restartKind: row.restart_kind,
     supervisorMode: row.supervisor_mode,
@@ -296,6 +331,7 @@ export function writeGatewayRestartHandoffSync(opts: {
   supervisorMode?: GatewayRestartHandoffSupervisorMode | null;
   ttlMs?: number;
   createdAt?: number;
+  restartTrace?: GatewayRestartHandoff["restartTrace"];
 }): GatewayRestartHandoff | null {
   const pid = normalizePid(opts.pid ?? process.pid);
   if (pid === null || !isRestartKind(opts.restartKind)) {
@@ -314,6 +350,7 @@ export function writeGatewayRestartHandoffSync(opts: {
   const ttlMs = normalizeTtlMs(opts.ttlMs);
   const reason = normalizeText(opts.reason, MAX_REASON_LENGTH);
   const processInstanceId = normalizeText(opts.processInstanceId, MAX_PROCESS_INSTANCE_ID_LENGTH);
+  const restartTrace = normalizeRestartTrace(opts.restartTrace);
   const payload: GatewayRestartHandoff = {
     kind: GATEWAY_SUPERVISOR_RESTART_HANDOFF_KIND,
     version: 1,
@@ -323,6 +360,7 @@ export function writeGatewayRestartHandoffSync(opts: {
     createdAt,
     expiresAt: createdAt + ttlMs,
     ...(reason ? { reason } : {}),
+    ...(restartTrace ? { restartTrace } : {}),
     source: normalizeSource(opts.source, reason),
     restartKind: opts.restartKind,
     supervisorMode,
