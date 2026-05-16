@@ -230,6 +230,37 @@ describe("SQLite session transcript store", () => {
     ]);
   });
 
+  it("links untyped transcript events when appending against the database tail", () => {
+    const stateDir = createTempDir();
+    const scope = {
+      env: { OPENCLAW_STATE_DIR: stateDir },
+      agentId: "main",
+      sessionId: "session-1",
+    };
+    appendSqliteSessionTranscriptEvent({
+      ...scope,
+      event: { id: "first", parentId: null },
+      parentMode: "database-tail",
+      now: () => 100,
+    });
+    appendSqliteSessionTranscriptEvent({
+      ...scope,
+      event: { id: "second", parentId: null },
+      parentMode: "database-tail",
+      now: () => 200,
+    });
+
+    expect(
+      loadSqliteSessionTranscriptEvents(scope).map(
+        (entry) => entry.event as { id?: string; parentId?: string | null },
+      ),
+    ).toEqual([
+      { id: "first", parentId: null },
+      { id: "second", parentId: "first" },
+    ]);
+    expect(countSqliteSessionTranscriptDisplayMessages(scope)).toBe(2);
+  });
+
   it("keeps transcript events isolated by agent id", () => {
     const stateDir = createTempDir();
 

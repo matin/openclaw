@@ -247,7 +247,7 @@ function readLatestTranscriptTailEventId(
       .selectFrom("transcript_event_identities")
       .select(["event_id"])
       .where("session_id", "=", sessionId)
-      .where("event_type", "!=", "session")
+      .where((eb) => eb.or([eb("event_type", "is", null), eb("event_type", "!=", "session")]))
       .where("has_parent", "=", 1)
       .orderBy("seq", "desc")
       .limit(1),
@@ -829,7 +829,7 @@ export function countSqliteSessionTranscriptDisplayMessages(
       WITH latest_leaf AS (
         SELECT event_id
         FROM transcript_event_identities
-        WHERE session_id = ${sessionId} AND event_type != 'session' AND has_parent = 1
+        WHERE session_id = ${sessionId} AND (event_type IS NULL OR event_type != 'session') AND has_parent = 1
         ORDER BY seq DESC
         LIMIT 1
       ),
@@ -845,7 +845,7 @@ export function countSqliteSessionTranscriptDisplayMessages(
       )
       SELECT
         (SELECT COUNT(*) FROM transcript_event_identities WHERE session_id = ${sessionId} AND has_parent = 1) AS parent_link_count,
-        (SELECT COUNT(*) FROM active_chain WHERE event_type != 'session') AS active_count,
+        (SELECT COUNT(*) FROM active_chain WHERE event_type IS NULL OR event_type != 'session') AS active_count,
         (
           SELECT COUNT(*)
           FROM transcript_events
