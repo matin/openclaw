@@ -95,6 +95,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function createLostLockError(scope: string, key: string, cause?: unknown): Error {
+  return new Error(
+    `Lost SQLite state lock ${scope}:${key}`,
+    cause === undefined ? undefined : { cause },
+  );
+}
+
 function tryAcquireOpenClawStateLock(params: {
   key: string;
   owner: string;
@@ -219,7 +226,7 @@ function renewOpenClawStateLock(params: {
 export async function withOpenClawStateLock<T>(
   key: string,
   options: OpenClawStateLockOptions,
-  task: () => Promise<T>,
+  task: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const owner = randomUUID();
   const scope = options.scope ?? DEFAULT_LOCK_SCOPE;
@@ -240,19 +247,40 @@ export async function withOpenClawStateLock<T>(
         options: databaseOptions,
       })
     ) {
+      const abortController = new AbortController();
+      let rejectLostLock!: (error: Error) => void;
+      const lostLock = new Promise<never>((_resolve, reject) => {
+        rejectLostLock = reject;
+      });
+      void lostLock.catch(() => {});
+      const failLostLock = (error: Error) => {
+        if (!abortController.signal.aborted) {
+          rejectLostLock(error);
+          abortController.abort(error);
+        }
+      };
       const renewEveryMs = Math.max(1, Math.floor(staleMs / 2));
       const renewal = setInterval(() => {
-        renewOpenClawStateLock({
-          key,
-          owner,
-          scope,
-          staleMs,
-          options: databaseOptions,
-        });
+        try {
+          const renewed = renewOpenClawStateLock({
+            key,
+            owner,
+            scope,
+            staleMs,
+            options: databaseOptions,
+          });
+          if (!renewed) {
+            failLostLock(createLostLockError(scope, key));
+          }
+        } catch (error) {
+          failLostLock(createLostLockError(scope, key, error));
+        }
       }, renewEveryMs);
       renewal.unref?.();
+      const taskPromise = task(abortController.signal);
+      void taskPromise.catch(() => {});
       try {
-        return await task();
+        return await Promise.race([taskPromise, lostLock]);
       } finally {
         clearInterval(renewal);
         releaseOpenClawStateLock({ key, owner, scope, options: databaseOptions });
