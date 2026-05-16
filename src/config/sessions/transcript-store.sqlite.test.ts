@@ -19,6 +19,7 @@ import {
   countSqliteSessionTranscriptDisplayMessages,
   deleteSqliteSessionTranscript,
   listSqliteSessionTranscripts,
+  loadSqliteSessionTranscriptBoundedEvents,
   loadSqliteSessionTranscriptEvents,
   loadSqliteSessionTranscriptTailEvents,
   recordSqliteSessionTranscriptSnapshot,
@@ -288,6 +289,45 @@ describe("SQLite session transcript store", () => {
         sessionId: "session-1",
       }),
     ).toBe(8);
+  });
+
+  it("reads bounded transcript heads without materializing rows beyond caps", () => {
+    const stateDir = createTempDir();
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    replaceSqliteSessionTranscriptEvents({
+      env,
+      agentId: "main",
+      sessionId: "session-1",
+      events: [
+        { type: "session", id: "session-1" },
+        { type: "message", id: "m1", message: { role: "assistant", content: "short" } },
+        {
+          type: "message",
+          id: "m2",
+          message: { role: "assistant", content: "this row should not be parsed" },
+        },
+      ],
+      now: () => 100,
+    });
+
+    expect(
+      loadSqliteSessionTranscriptBoundedEvents({
+        env,
+        agentId: "main",
+        sessionId: "session-1",
+        maxEvents: 2,
+        maxBytes: 120,
+      }).map((entry) => (entry.event as { id?: string }).id),
+    ).toEqual(["session-1", "m1"]);
+    expect(
+      loadSqliteSessionTranscriptBoundedEvents({
+        env,
+        agentId: "main",
+        sessionId: "session-1",
+        maxEvents: 3,
+        maxBytes: 8,
+      }),
+    ).toEqual([]);
   });
 
   it("preserves event timestamps when replacing transcript rows", () => {

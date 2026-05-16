@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { loadSqliteSessionTranscriptEvents } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { loadSqliteSessionTranscriptBoundedEvents } from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
   DEFAULT_PROVIDER,
   parseModelRef,
@@ -1107,6 +1107,9 @@ function resolveChatType(ctx: {
     if (sessionKey.includes(":direct:")) {
       return "direct";
     }
+    if (sessionKey.includes(":dm:")) {
+      return "direct";
+    }
     if (sessionKey.includes(":group:")) {
       return "group";
     }
@@ -1114,6 +1117,9 @@ function resolveChatType(ctx: {
       return "channel";
     }
     if (sessionKey.includes(":explicit:")) {
+      return "explicit";
+    }
+    if (/^agent:[^:]+:explicit$/.test(sessionKey)) {
       return "explicit";
     }
     if (/^agent:[^:]+:main:thread:/.test(sessionKey)) {
@@ -1539,11 +1545,12 @@ async function streamBoundedTranscriptEvents(params: {
 }): Promise<void> {
   const limits = resolveTranscriptReadLimits(params.limits);
   try {
-    const events = loadSqliteSessionTranscriptEvents(params.transcriptScope);
-    if (JSON.stringify(events.map((entry) => entry.event)).length > limits.maxBytes) {
-      return;
-    }
-    for (const { event } of events.slice(0, limits.maxLines)) {
+    const events = loadSqliteSessionTranscriptBoundedEvents({
+      ...params.transcriptScope,
+      maxBytes: limits.maxBytes,
+      maxEvents: limits.maxLines,
+    });
+    for (const { event } of events) {
       if (params.onRecord(event)) {
         break;
       }

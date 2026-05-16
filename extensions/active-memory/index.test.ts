@@ -961,6 +961,30 @@ describe("active-memory plugin", () => {
     );
   });
 
+  it("keeps legacy dm session keys eligible for direct recall", async () => {
+    api.pluginConfig = {
+      agents: ["main"],
+      allowedChatTypes: ["direct"],
+    };
+    plugin.register(api as unknown as OpenClawPluginApi);
+
+    const result = await hooks.before_prompt_build(
+      { prompt: "what did we discuss?", messages: [] },
+      {
+        agentId: "main",
+        trigger: "user",
+        sessionKey: "agent:main:dm:peer-123",
+        messageProvider: "telegram",
+        channelId: "telegram",
+      },
+    );
+
+    expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      prependContext: expect.stringContaining("<active_memory_plugin>"),
+    });
+  });
+
   it("uses messageProvider not Google Chat space id for embedded recall (#78918)", async () => {
     seedSessionEntry("agent:main:googlechat:default:direct:spaces/khfx4yaaaae", {
       chatType: "direct",
@@ -1011,6 +1035,30 @@ describe("active-memory plugin", () => {
         sessionKey: "agent:main:explicit:portal-123",
         messageProvider: "webchat",
         channelId: "webchat",
+      },
+    );
+
+    expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      prependContext: expect.stringContaining("<active_memory_plugin>"),
+    });
+  });
+
+  it("keeps exact explicit session keys eligible when no session row exists yet", async () => {
+    api.pluginConfig = {
+      agents: ["main"],
+      allowedChatTypes: ["explicit"],
+    };
+    plugin.register(api as unknown as OpenClawPluginApi);
+
+    const result = await hooks.before_prompt_build(
+      { prompt: "what should i work on next?", messages: [] },
+      {
+        agentId: "main",
+        trigger: "user",
+        sessionKey: "agent:main:explicit",
+        messageProvider: "custom",
+        channelId: "custom",
       },
     );
 

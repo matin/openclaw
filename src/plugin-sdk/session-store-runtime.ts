@@ -36,6 +36,7 @@ export { canonicalizeMainSessionAlias } from "../config/sessions/main-session.js
 export {
   appendSqliteSessionTranscriptEvent,
   hasSqliteSessionTranscriptEvents,
+  loadSqliteSessionTranscriptBoundedEvents,
   loadSqliteSessionTranscriptEvents,
   replaceSqliteSessionTranscriptEvents,
 } from "../config/sessions/transcript-store.sqlite.js";

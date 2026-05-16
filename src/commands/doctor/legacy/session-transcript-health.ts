@@ -332,7 +332,9 @@ function normalizeCodexAppServerBindingPayload(
   ) {
     return undefined;
   }
+  const payload = JSON.parse(JSON.stringify(parsed)) as Record<string, unknown>;
   return {
+    ...payload,
     schemaVersion: 1,
     sessionId,
     threadId: parsed.threadId,

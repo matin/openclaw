@@ -203,6 +203,20 @@ describe("doctor session transcript repair", () => {
         threadId: "thread-123",
         cwd: root,
         model: "gpt-5.5",
+        userMcpServersFingerprint: "user-mcp-v1",
+        mcpServersFingerprint: "mcp-v1",
+        pluginAppsFingerprint: "plugin-apps-v1",
+        pluginAppsInputFingerprint: "plugin-app-input-v1",
+        pluginAppPolicyContext: {
+          fingerprint: "policy-v1",
+          apps: {},
+          pluginAppIds: {},
+        },
+        contextEngine: {
+          schemaVersion: 1,
+          engineId: "context-engine",
+          policyFingerprint: "context-policy-v1",
+        },
       }),
     );
 
@@ -220,6 +234,20 @@ describe("doctor session transcript repair", () => {
       sessionId: "session-1",
       cwd: root,
       model: "gpt-5.5",
+      userMcpServersFingerprint: "user-mcp-v1",
+      mcpServersFingerprint: "mcp-v1",
+      pluginAppsFingerprint: "plugin-apps-v1",
+      pluginAppsInputFingerprint: "plugin-app-input-v1",
+      pluginAppPolicyContext: {
+        fingerprint: "policy-v1",
+        apps: {},
+        pluginAppIds: {},
+      },
+      contextEngine: {
+        schemaVersion: 1,
+        engineId: "context-engine",
+        policyFingerprint: "context-policy-v1",
+      },
     });
     const [message, title] = note.mock.calls[0] as [string, string];
     expect(title).toBe("Session transcripts");

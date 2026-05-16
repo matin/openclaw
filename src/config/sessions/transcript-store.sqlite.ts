@@ -51,6 +51,12 @@ export type LoadSqliteSessionTranscriptTailEventsOptions = SqliteSessionTranscri
   maxEvents: number;
 };
 
+export type LoadSqliteSessionTranscriptBoundedEventsOptions =
+  SqliteSessionTranscriptStoreOptions & {
+    maxBytes?: number;
+    maxEvents: number;
+  };
+
 export type SqliteSessionTranscriptScope = {
   agentId: string;
   path?: string;
@@ -736,6 +742,41 @@ export function loadSqliteSessionTranscriptTailEvents(
     bytes += eventBytes;
   }
   return selected.toReversed().map(parseTranscriptEventRow);
+}
+
+export function loadSqliteSessionTranscriptBoundedEvents(
+  options: LoadSqliteSessionTranscriptBoundedEventsOptions,
+): SqliteSessionTranscriptEvent[] {
+  const { sessionId } = normalizeTranscriptScope(options);
+  const database = openTranscriptAgentDatabase(options);
+  const maxEvents = normalizePositiveInteger(options.maxEvents, 1);
+  const maxBytes =
+    typeof options.maxBytes === "number" && Number.isFinite(options.maxBytes)
+      ? Math.max(1, Math.floor(options.maxBytes))
+      : undefined;
+  const rows = executeSqliteQuerySync(
+    database.db,
+    getAgentTranscriptKysely(database.db)
+      .selectFrom("transcript_events")
+      .select(["seq", "event_json", "created_at"])
+      .where("session_id", "=", sessionId)
+      .orderBy("seq", "asc")
+      .limit(maxEvents),
+  ).rows;
+  const selected: typeof rows = [];
+  let bytes = 0;
+  for (const row of rows) {
+    const eventBytes = Buffer.byteLength(row.event_json, "utf8") + 1;
+    if (maxBytes !== undefined && selected.length > 0 && bytes + eventBytes > maxBytes) {
+      break;
+    }
+    if (maxBytes !== undefined && selected.length === 0 && eventBytes > maxBytes) {
+      return [];
+    }
+    selected.push(row);
+    bytes += eventBytes;
+  }
+  return selected.map(parseTranscriptEventRow);
 }
 
 export function countSqliteSessionTranscriptDisplayMessages(
