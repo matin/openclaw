@@ -6,6 +6,7 @@ import {
   getSessionEntry,
   loadSessionStore,
   readSessionUpdatedAt,
+  resolveAndPersistSessionFile,
   saveSessionStore,
   updateSessionStore,
   upsertSessionEntry,
@@ -142,6 +143,48 @@ describe("session-store-runtime compatibility", () => {
         expect(
           getSessionEntry({ agentId: "main", env, sessionKey: "agent:main:new" })?.sessionId,
         ).toBe("new-session");
+      },
+    );
+  });
+
+  it("preserves persisted transcript paths when resolving existing sessions", async () => {
+    await withOpenClawTestState(
+      {
+        layout: "state-only",
+        prefix: "openclaw-session-store-compat-",
+        scenario: "minimal",
+      },
+      async (state) => {
+        const env = testEnv(state.stateDir);
+        const storePath = canonicalStorePath(state.stateDir);
+        const existingFile = path.join(state.stateDir, "legacy", "custom.jsonl");
+        const fallbackFile = path.join(
+          state.stateDir,
+          "agents",
+          "main",
+          "sessions",
+          "fallback.jsonl",
+        );
+        const sessionStore = {
+          "agent:main:main": {
+            sessionId: "existing-session",
+            sessionFile: existingFile,
+            updatedAt: 100,
+            sessionStartedAt: 100,
+          },
+        };
+
+        const result = await resolveAndPersistSessionFile({
+          sessionId: "existing-session",
+          sessionKey: "agent:main:main",
+          sessionStore,
+          storePath,
+          fallbackSessionFile: fallbackFile,
+        });
+
+        expect(result.sessionFile).toBe(existingFile);
+        const persisted = getSessionEntry({ agentId: "main", env, sessionKey: "agent:main:main" });
+        expect((persisted as { sessionFile?: string } | undefined)?.sessionFile).toBe(existingFile);
       },
     );
   });

@@ -270,8 +270,11 @@ export async function resolveAndPersistSessionFile(params: {
       updatedAt: now,
       sessionStartedAt: now,
     };
+  const persistedSessionFile =
+    baseEntry.sessionId === params.sessionId ? baseEntry.sessionFile?.trim() : undefined;
   const sessionFile =
-    params.fallbackSessionFile?.trim() ??
+    persistedSessionFile ||
+    params.fallbackSessionFile?.trim() ||
     resolveSessionTranscriptPathInDir(
       params.sessionId,
       params.sessionsDir ?? path.dirname(path.resolve(params.storePath)),
