@@ -14,7 +14,10 @@ import {
   replaceSqliteSessionTranscriptEvents,
 } from "../config/sessions/transcript-store.sqlite.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
 import { DEFAULT_AGENT_ID } from "../routing/session-key.js";
+import type { DB as OpenClawAgentKyselyDatabase } from "../state/openclaw-agent-db.generated.js";
+import { openOpenClawAgentDatabase } from "../state/openclaw-agent-db.js";
 import {
   captureCompactionCheckpointSnapshotAsync,
   cleanupCompactionCheckpointSnapshot,
@@ -39,6 +42,23 @@ function createScopedSessionManager(cwd: string) {
     sessionId: randomUUID(),
     cwd,
   });
+}
+
+function corruptTranscriptEventJson(params: {
+  sessionId: string;
+  seq: number;
+  eventJson: string;
+}): void {
+  type TranscriptEventsDatabase = Pick<OpenClawAgentKyselyDatabase, "transcript_events">;
+  const database = openOpenClawAgentDatabase({ agentId: DEFAULT_AGENT_ID });
+  executeSqliteQuerySync(
+    database.db,
+    getNodeSqliteKysely<TranscriptEventsDatabase>(database.db)
+      .updateTable("transcript_events")
+      .set({ event_json: params.eventJson })
+      .where("session_id", "=", params.sessionId)
+      .where("seq", "=", params.seq),
+  );
 }
 
 afterEach(async () => {
@@ -232,6 +252,57 @@ describe("session-compaction-checkpoints", () => {
 
     expect(snapshot).toBeNull();
     expect(MAX_COMPACTION_CHECKPOINT_SNAPSHOT_BYTES).toBeGreaterThan(64);
+  });
+
+  test("async checkpoint helpers reject oversized SQLite transcripts before parsing rows", async () => {
+    const sourceSessionId = "source-capture-oversized-corrupt";
+    replaceSqliteSessionTranscriptEvents({
+      agentId: DEFAULT_AGENT_ID,
+      sessionId: sourceSessionId,
+      events: [
+        {
+          type: "session",
+          id: sourceSessionId,
+          timestamp: new Date(0).toISOString(),
+          cwd: "/tmp/openclaw-oversized-corrupt",
+        },
+        {
+          type: "message",
+          id: "oversized-leaf",
+          role: "assistant",
+          content: "this row will be replaced with corrupt oversized JSON",
+        },
+      ],
+    });
+    corruptTranscriptEventJson({
+      sessionId: sourceSessionId,
+      seq: 1,
+      eventJson: `{"type":"message","id":"oversized-leaf","content":"${"x".repeat(256)}`,
+    });
+
+    await expect(
+      readSessionLeafIdFromTranscriptAsync(
+        {
+          agentId: DEFAULT_AGENT_ID,
+          sessionId: sourceSessionId,
+        },
+        64,
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      captureCompactionCheckpointSnapshotAsync({
+        agentId: DEFAULT_AGENT_ID,
+        sessionId: sourceSessionId,
+        maxBytes: 64,
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      forkCompactionCheckpointTranscriptAsync({
+        agentId: DEFAULT_AGENT_ID,
+        sourceSessionId,
+        maxBytes: 64,
+      }),
+    ).resolves.toBeNull();
   });
 
   test("async fork creates a checkpoint branch transcript from SQLite rows", async () => {

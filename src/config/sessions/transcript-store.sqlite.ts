@@ -68,6 +68,13 @@ export type SqliteSessionTranscript = SqliteSessionTranscriptScope & {
   eventCount: number;
 };
 
+export type SqliteSessionTranscriptStats = {
+  sessionId: string;
+  updatedAt: number;
+  eventCount: number;
+  jsonlBytes: number;
+};
+
 export type SqliteSessionTranscriptSnapshot = SqliteSessionTranscriptScope & {
   snapshotId: string;
   reason: string;
@@ -531,7 +538,7 @@ export function listSqliteSessionTranscripts(
 
 export function getSqliteSessionTranscriptStats(
   options: SqliteSessionTranscriptStoreOptions,
-): Pick<SqliteSessionTranscript, "sessionId" | "updatedAt" | "eventCount"> | null {
+): SqliteSessionTranscriptStats | null {
   const { sessionId } = normalizeTranscriptScope(options);
   const database = openTranscriptAgentDatabase(options);
   const row = executeSqliteQueryTakeFirstSync(
@@ -541,6 +548,11 @@ export function getSqliteSessionTranscriptStats(
       .select([
         (eb) => eb.fn.max<number | bigint>("created_at").as("updated_at"),
         (eb) => eb.fn.countAll<number | bigint>().as("event_count"),
+        // kysely-allow-raw: SQLite length(CAST(text AS blob)) gives the stored
+        // JSON byte count for the JSONL-size preflight; no identifiers are interpolated.
+        sql<number | bigint | null>`coalesce(sum(length(CAST(event_json AS blob)) + 1), 0)`.as(
+          "jsonl_bytes",
+        ),
       ])
       .where("session_id", "=", sessionId),
   );
@@ -551,10 +563,13 @@ export function getSqliteSessionTranscriptStats(
   }
   const updatedAt =
     typeof row?.updated_at === "bigint" ? Number(row.updated_at) : (row?.updated_at ?? 0);
+  const rawBytes =
+    typeof row?.jsonl_bytes === "bigint" ? Number(row.jsonl_bytes) : (row?.jsonl_bytes ?? 0);
   return {
     sessionId,
     updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
     eventCount,
+    jsonlBytes: Number.isFinite(rawBytes) && rawBytes > 0 ? Math.floor(rawBytes) : 0,
   };
 }
 
@@ -711,6 +726,24 @@ export function loadSqliteSessionTranscriptEvents(
       .where("session_id", "=", sessionId)
       .orderBy("seq", "asc"),
   ).rows.map(parseTranscriptEventRow);
+}
+
+export function readLatestSqliteSessionTranscriptLeafId(
+  options: SqliteSessionTranscriptStoreOptions,
+): string | null {
+  const { sessionId } = normalizeTranscriptScope(options);
+  const database = openTranscriptAgentDatabase(options);
+  const row = executeSqliteQueryTakeFirstSync(
+    database.db,
+    getAgentTranscriptKysely(database.db)
+      .selectFrom("transcript_event_identities")
+      .select(["event_id"])
+      .where("session_id", "=", sessionId)
+      .where((eb) => eb.or([eb("event_type", "is", null), eb("event_type", "!=", "session")]))
+      .orderBy("seq", "desc")
+      .limit(1),
+  );
+  return typeof row?.event_id === "string" && row.event_id.trim() ? row.event_id.trim() : null;
 }
 
 export function loadSqliteSessionTranscriptTailEvents(

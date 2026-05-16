@@ -13,7 +13,9 @@ import type {
 import {
   deleteSqliteSessionTranscript,
   deleteSqliteSessionTranscriptSnapshot,
+  getSqliteSessionTranscriptStats,
   loadSqliteSessionTranscriptEvents,
+  readLatestSqliteSessionTranscriptLeafId,
   recordSqliteSessionTranscriptSnapshot,
   replaceSqliteSessionTranscriptEvents,
 } from "../config/sessions/transcript-store.sqlite.js";
@@ -103,12 +105,46 @@ function loadTranscriptEntriesFromSqlite(params: {
   );
 }
 
-function transcriptEventsByteLength(events: readonly PiTranscriptEntry[]): number {
-  let total = 0;
-  for (const event of events) {
-    total += Buffer.byteLength(`${JSON.stringify(event)}\n`, "utf8");
+function normalizeSnapshotMaxBytes(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(1, Math.floor(value))
+    : MAX_COMPACTION_CHECKPOINT_SNAPSHOT_BYTES;
+}
+
+function getBoundedTranscriptStats(params: {
+  agentId: string;
+  path?: string;
+  sessionId: string;
+  maxBytes?: number;
+}) {
+  const agentId = params.agentId.trim() || DEFAULT_AGENT_ID;
+  const sessionId = params.sessionId.trim();
+  if (!sessionId) {
+    return null;
   }
-  return total;
+  const stats = getSqliteSessionTranscriptStats({
+    agentId,
+    path: params.path,
+    sessionId,
+  });
+  const maxBytes = normalizeSnapshotMaxBytes(params.maxBytes);
+  return stats && stats.jsonlBytes <= maxBytes ? { agentId, sessionId, stats } : null;
+}
+
+function loadBoundedTranscriptEntriesFromSqlite(params: {
+  agentId: string;
+  path?: string;
+  sessionId: string;
+  maxBytes?: number;
+}): PiTranscriptEntry[] | null {
+  const bounded = getBoundedTranscriptStats(params);
+  return bounded
+    ? loadTranscriptEntriesFromSqlite({
+        agentId: bounded.agentId,
+        path: params.path,
+        sessionId: bounded.sessionId,
+      })
+    : null;
 }
 
 function latestEntryId(entries: readonly PiTranscriptEntry[]): string | null {
@@ -125,14 +161,18 @@ function latestEntryId(entries: readonly PiTranscriptEntry[]): string | null {
 }
 
 export async function readSessionLeafIdFromTranscriptAsync(
-  scope: { agentId: string; sessionId: string },
+  scope: { agentId: string; path?: string; sessionId: string },
   maxBytes = MAX_COMPACTION_CHECKPOINT_SNAPSHOT_BYTES,
 ): Promise<string | null> {
-  const entries = loadTranscriptEntriesFromSqlite(scope);
-  if (!entries || transcriptEventsByteLength(entries) > maxBytes) {
+  const bounded = getBoundedTranscriptStats({ ...scope, maxBytes });
+  if (!bounded) {
     return null;
   }
-  return latestEntryId(entries);
+  return readLatestSqliteSessionTranscriptLeafId({
+    agentId: bounded.agentId,
+    path: scope.path,
+    sessionId: bounded.sessionId,
+  });
 }
 
 export async function forkCompactionCheckpointTranscriptAsync(params: {
@@ -140,11 +180,13 @@ export async function forkCompactionCheckpointTranscriptAsync(params: {
   agentId: string;
   path?: string;
   targetCwd?: string;
+  maxBytes?: number;
 }): Promise<ForkedCompactionCheckpointTranscript | null> {
-  const entries = loadTranscriptEntriesFromSqlite({
+  const entries = loadBoundedTranscriptEntriesFromSqlite({
     agentId: params.agentId,
     path: params.path,
     sessionId: params.sourceSessionId,
+    maxBytes: params.maxBytes,
   });
   if (!entries) {
     return null;
@@ -195,13 +237,16 @@ export async function captureCompactionCheckpointSnapshotAsync(params: {
   sessionId: string;
   maxBytes?: number;
 }): Promise<CapturedCompactionCheckpointSnapshot | null> {
-  const maxBytes = params.maxBytes ?? MAX_COMPACTION_CHECKPOINT_SNAPSHOT_BYTES;
+  const bounded = getBoundedTranscriptStats(params);
+  if (!bounded) {
+    return null;
+  }
   const entries = loadTranscriptEntriesFromSqlite({
     agentId: params.agentId,
     path: params.path,
-    sessionId: params.sessionId,
+    sessionId: bounded.sessionId,
   });
-  if (!entries || transcriptEventsByteLength(entries) > maxBytes) {
+  if (!entries) {
     return null;
   }
   const sourceHeader = entries[0] as SessionHeader | undefined;
