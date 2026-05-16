@@ -159,6 +159,19 @@ describe("DiffArtifactStore", () => {
     });
   });
 
+  it("keeps standalone artifact dirs when cleanup overlaps metadata registration", async () => {
+    const register = blobStore.register.bind(blobStore);
+    vi.spyOn(blobStore, "register").mockImplementationOnce(async (key, metadata, blob, opts) => {
+      await store.cleanupExpired();
+      await register(key, metadata, blob, opts);
+    });
+
+    const standalone = await store.createStandaloneFileArtifact();
+
+    const directory = await fs.stat(path.dirname(standalone.filePath));
+    expect(directory.isDirectory()).toBe(true);
+  });
+
   it("expires standalone file artifacts using ttl metadata", async () => {
     vi.useFakeTimers();
     const now = new Date("2026-02-27T16:00:00Z");

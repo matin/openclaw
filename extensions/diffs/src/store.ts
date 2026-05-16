@@ -168,8 +168,8 @@ export class DiffArtifactStore {
       ...(params.context ? { context: params.context } : {}),
     };
 
-    await (await this.artifactRoot()).mkdir(id);
     await this.writeStandaloneMeta(meta);
+    await (await this.artifactRoot()).mkdir(id);
     this.scheduleCleanup();
     return {
       id,

@@ -25,6 +25,7 @@ import {
 } from "./plugin-state-store.types.js";
 
 export const MAX_PLUGIN_STATE_VALUE_BYTES = 65_536;
+export const MAX_PLUGIN_STATE_ENTRIES_PER_PLUGIN = 1_000;
 
 type PluginStateEntriesTable = OpenClawStateKyselyDatabase["plugin_state_entries"];
 type PluginStateStoreDatabase = Pick<OpenClawStateKyselyDatabase, "plugin_state_entries">;
@@ -247,6 +248,21 @@ function countLivePluginStateNamespaceEntries(
   return countRow(row);
 }
 
+function countLivePluginStateEntries(
+  db: DatabaseSync,
+  params: { pluginId: string; now: number },
+): number {
+  const row = executeSqliteQueryTakeFirstSync(
+    db,
+    getPluginStateKysely(db)
+      .selectFrom("plugin_state_entries")
+      .select((eb) => eb.fn.countAll<number | bigint>().as("count"))
+      .where("plugin_id", "=", params.pluginId)
+      .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", params.now)])),
+  );
+  return countRow(row);
+}
+
 function deleteOldestPluginStateNamespaceEntries(
   db: DatabaseSync,
   params: { pluginId: string; namespace: string; protectedKey: string; now: number; limit: number },
@@ -356,6 +372,19 @@ function enforcePostRegisterLimits(params: {
       protectedKey: params.protectedKey,
       now: params.now,
       limit: namespaceCount - params.maxEntries,
+    });
+  }
+
+  const pluginCount = countLivePluginStateEntries(params.store.db, {
+    pluginId: params.pluginId,
+    now: params.now,
+  });
+  if (pluginCount > MAX_PLUGIN_STATE_ENTRIES_PER_PLUGIN) {
+    throw createPluginStateError({
+      code: "PLUGIN_STATE_LIMIT_EXCEEDED",
+      operation: "register",
+      message: `Plugin state for ${params.pluginId} exceeds the ${MAX_PLUGIN_STATE_ENTRIES_PER_PLUGIN} live row limit.`,
+      path: params.store.path,
     });
   }
 }
