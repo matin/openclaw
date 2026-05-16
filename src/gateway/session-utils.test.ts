@@ -1175,6 +1175,7 @@ describe("listSessionsFromStore selected model display", () => {
       expect(settled).toBe(false);
       const listed = await listedPromise;
       expect(listed.databasePath).toBe(expected.databasePath);
+      expect(listed.path).toBe(expected.databasePath);
       expect(listed.count).toBe(expected.count);
       expect(listed.defaults).toEqual(expected.defaults);
       expect(listed.sessions).toHaveLength(expected.sessions.length);

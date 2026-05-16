@@ -171,6 +171,7 @@ test("lists and patches session entries via sessions.* RPC", async () => {
   ws.close();
 
   const list1 = await directSessionReq<{
+    path?: string;
     databasePath: string;
     defaults?: { model?: string | null; modelProvider?: string | null };
     sessions: Array<{
@@ -186,6 +187,7 @@ test("lists and patches session entries via sessions.* RPC", async () => {
 
   expect(list1.ok).toBe(true);
   expect(list1.payload?.databasePath).toMatch(/openclaw-agent\.sqlite$/);
+  expect(list1.payload?.path).toBe(list1.payload?.databasePath);
   expect(list1.payload?.sessions.some((s) => s.key === "global")).toBe(false);
   expect(list1.payload?.defaults?.modelProvider).toBe("anthropic");
   const main = list1.payload?.sessions.find((s) => s.key === "agent:main:main");
@@ -196,6 +198,7 @@ test("lists and patches session entries via sessions.* RPC", async () => {
   expect(main?.lastAccountId).toBe("work");
   expect(main?.deliveryContext).toEqual({
     channel: "whatsapp",
+    chatType: "direct",
     to: "+1555",
     accountId: "work",
     threadId: "1737500000.123456",

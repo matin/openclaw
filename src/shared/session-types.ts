@@ -28,6 +28,8 @@ export type GatewayAgentRow = {
 
 export type SessionsListResultBase<TDefaults, TRow> = {
   ts: number;
+  /** Deprecated compatibility alias for clients that still read the JSON store path field. */
+  path?: string;
   databasePath: string;
   count: number;
   totalCount?: number;

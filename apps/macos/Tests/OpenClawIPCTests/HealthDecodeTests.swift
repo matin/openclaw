@@ -29,4 +29,12 @@ struct HealthDecodeTests {
 
         #expect(snap == nil)
     }
+
+    @Test func `sessions list decodes legacy path field`() throws {
+        let data = Data(
+            #"{"ts":1733622000,"path":"/tmp/sessions.json","count":0,"sessions":[]}"#.utf8)
+        let decoded = try JSONDecoder().decode(GatewaySessionsListResponse.self, from: data)
+
+        #expect(decoded.databasePath == "/tmp/sessions.json")
+    }
 }

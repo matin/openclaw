@@ -32,6 +32,34 @@ struct GatewaySessionsListResponse: Codable {
     let count: Int
     let defaults: GatewaySessionDefaultsRecord?
     let sessions: [GatewaySessionEntryRecord]
+
+    private enum CodingKeys: String, CodingKey {
+        case ts
+        case databasePath
+        case path
+        case count
+        case defaults
+        case sessions
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.ts = try container.decodeIfPresent(Double.self, forKey: .ts)
+        self.databasePath = try container.decodeIfPresent(String.self, forKey: .databasePath)
+            ?? container.decode(String.self, forKey: .path)
+        self.count = try container.decode(Int.self, forKey: .count)
+        self.defaults = try container.decodeIfPresent(GatewaySessionDefaultsRecord.self, forKey: .defaults)
+        self.sessions = try container.decode([GatewaySessionEntryRecord].self, forKey: .sessions)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(self.ts, forKey: .ts)
+        try container.encode(self.databasePath, forKey: .databasePath)
+        try container.encode(self.count, forKey: .count)
+        try container.encodeIfPresent(self.defaults, forKey: .defaults)
+        try container.encode(self.sessions, forKey: .sessions)
+    }
 }
 
 struct SessionTokenStats {
