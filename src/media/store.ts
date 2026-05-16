@@ -775,6 +775,7 @@ export async function saveMediaSource(
   headers?: Record<string, string>,
   subdir = "",
   maxBytes = MAX_BYTES,
+  state?: OpenClawStateDatabaseOptions,
 ): Promise<SavedMedia> {
   const dir = resolveMediaScopedDir(subdir, "saveMediaSource");
   await cleanOldMedia(DEFAULT_TTL_MS, { recursive: false });
@@ -794,7 +795,7 @@ export async function saveMediaSource(
     const ext = extensionForMime(mime) ?? path.extname(new URL(source).pathname);
     const id = buildSavedMediaId({ baseId, ext });
     const materializedPath = await retryAfterRecreatingDir(dir, () =>
-      writeSavedMediaBuffer({ subdir, id, buffer, contentType: mime }),
+      writeSavedMediaBuffer({ subdir, id, buffer, contentType: mime, state }),
     );
     return buildSavedMediaResult({
       dir,
@@ -809,7 +810,13 @@ export async function saveMediaSource(
     const mime = await detectMime({ buffer, filePath: source });
     const ext = extensionForMime(mime) ?? path.extname(source);
     const id = buildSavedMediaId({ baseId, ext });
-    const materializedPath = await writeSavedMediaBuffer({ subdir, id, buffer, contentType: mime });
+    const materializedPath = await writeSavedMediaBuffer({
+      subdir,
+      id,
+      buffer,
+      contentType: mime,
+      state,
+    });
     return buildSavedMediaResult({
       dir,
       id,
@@ -832,6 +839,7 @@ export async function saveMediaBuffer(
   maxBytes = MAX_BYTES,
   originalFilename?: string,
   detectionFilePathHint?: string,
+  state?: OpenClawStateDatabaseOptions,
 ): Promise<SavedMedia> {
   if (buffer.byteLength > maxBytes) {
     throw new Error(`Media exceeds ${formatMediaLimitMb(maxBytes)} limit`);
@@ -851,7 +859,13 @@ export async function saveMediaBuffer(
     originalFilename,
   });
   const id = buildSavedMediaId({ baseId: uuid, ext, originalFilename });
-  const materializedPath = await writeSavedMediaBuffer({ subdir, id, buffer, contentType: mime });
+  const materializedPath = await writeSavedMediaBuffer({
+    subdir,
+    id,
+    buffer,
+    contentType: mime,
+    state,
+  });
   return buildSavedMediaResult({
     dir,
     id,

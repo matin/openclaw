@@ -239,8 +239,13 @@ function readManagedImageRecordFromSqlite(
 
 async function resolveManagedImageRecordOriginalPath(record: {
   original: { mediaId: string; mediaSubdir: string };
+  stateDir?: string;
 }): Promise<string> {
-  return await resolveMediaBufferPath(record.original.mediaId, record.original.mediaSubdir);
+  return await resolveMediaBufferPath(
+    record.original.mediaId,
+    record.original.mediaSubdir,
+    record.stateDir ? { env: { ...process.env, OPENCLAW_STATE_DIR: record.stateDir } } : undefined,
+  );
 }
 
 function corruptManagedImageRecordJson(stateDir: string, attachmentId: string): void {
@@ -646,10 +651,18 @@ describe("createManagedOutgoingImageBlocks", () => {
     const record = readManagedImageRecordFromSqlite(stateDir, attachmentId) as {
       original: { mediaId: string; mediaSubdir: string };
     };
-    const originalPath = await resolveManagedImageRecordOriginalPath(record);
+    const originalPath = await resolveManagedImageRecordOriginalPath({ ...record, stateDir });
     expect(originalPath).toContain(
       `${path.sep}media${path.sep}outgoing${path.sep}originals${path.sep}`,
     );
+
+    const { result } = await requestManagedImage({
+      stateDir,
+      pathName: new URL(String(block.url), "http://127.0.0.1").pathname,
+      authResponse: { authMethod: "token" },
+    });
+    expect(result.statusCode).toBe(200);
+    expect(result.headers["content-type"]).toBe("image/png");
   });
 
   it("rejects oversized image data urls before decoding the payload", async () => {
@@ -697,7 +710,7 @@ describe("createManagedOutgoingImageBlocks", () => {
       const record = readManagedImageRecordFromSqlite(stateDir, attachmentId) as {
         original: { filename: string; mediaId: string; mediaSubdir: string };
       };
-      const originalPath = await resolveManagedImageRecordOriginalPath(record);
+      const originalPath = await resolveManagedImageRecordOriginalPath({ ...record, stateDir });
       expect(record.original.filename).toMatch(/\.png$/);
       expect(originalPath).not.toBe(sourcePath);
       expect(originalPath).toContain(expectedManagedOriginalsDir());
