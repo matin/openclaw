@@ -68,7 +68,7 @@ export type RecordOpenClawStateBackupRunOptions = OpenClawStateDatabaseOptions &
   manifest: Record<string, unknown>;
 };
 
-let cachedDatabase: OpenClawStateDatabase | null = null;
+const cachedDatabases = new Map<string, OpenClawStateDatabase>();
 
 type OpenClawStateMetadataDatabase = Pick<
   OpenClawStateKyselyDatabase,
@@ -150,14 +150,14 @@ export function openOpenClawStateDatabase(
 ): OpenClawStateDatabase {
   const env = options.env ?? process.env;
   const pathname = resolveDatabasePath(options);
-  if (cachedDatabase && cachedDatabase.path === pathname) {
-    return cachedDatabase;
+  const cached = cachedDatabases.get(pathname);
+  if (cached?.db.isOpen) {
+    return cached;
   }
-  if (cachedDatabase) {
-    cachedDatabase.walMaintenance.close();
-    clearNodeSqliteKyselyCacheForDatabase(cachedDatabase.db);
-    cachedDatabase.db.close();
-    cachedDatabase = null;
+  if (cached) {
+    cached.walMaintenance.close();
+    clearNodeSqliteKyselyCacheForDatabase(cached.db);
+    cachedDatabases.delete(pathname);
   }
 
   ensureOpenClawStatePermissions(pathname, env);
@@ -178,8 +178,9 @@ export function openOpenClawStateDatabase(
     throw err;
   }
   ensureOpenClawStatePermissions(pathname, env);
-  cachedDatabase = { db, path: pathname, walMaintenance };
-  return cachedDatabase;
+  const database = { db, path: pathname, walMaintenance };
+  cachedDatabases.set(pathname, database);
+  return database;
 }
 
 export function runOpenClawStateWriteTransaction<T>(
@@ -273,17 +274,18 @@ export function recordOpenClawStateBackupRun(options: RecordOpenClawStateBackupR
 }
 
 export function closeOpenClawStateDatabase(): void {
-  if (!cachedDatabase) {
-    return;
+  for (const database of cachedDatabases.values()) {
+    database.walMaintenance.close();
+    clearNodeSqliteKyselyCacheForDatabase(database.db);
+    if (database.db.isOpen) {
+      database.db.close();
+    }
   }
-  cachedDatabase.walMaintenance.close();
-  clearNodeSqliteKyselyCacheForDatabase(cachedDatabase.db);
-  cachedDatabase.db.close();
-  cachedDatabase = null;
+  cachedDatabases.clear();
 }
 
 export function isOpenClawStateDatabaseOpen(): boolean {
-  return cachedDatabase?.db.isOpen === true;
+  return Array.from(cachedDatabases.values()).some((database) => database.db.isOpen);
 }
 
 export const closeOpenClawStateDatabaseForTest = closeOpenClawStateDatabase;

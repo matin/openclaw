@@ -110,6 +110,27 @@ describe("openclaw state database", () => {
     expect(fs.existsSync(databasePath)).toBe(true);
   });
 
+  it("keeps cached handles open when another state path is opened", () => {
+    const firstPath = path.join(
+      createTempStateDir(),
+      "state",
+      `first-${process.pid}-${Date.now()}.sqlite`,
+    );
+    const secondPath = path.join(
+      createTempStateDir(),
+      "state",
+      `second-${process.pid}-${Date.now()}.sqlite`,
+    );
+
+    const first = openOpenClawStateDatabase({ path: firstPath });
+    const second = openOpenClawStateDatabase({ path: secondPath });
+
+    expect(first.db.isOpen).toBe(true);
+    expect(second.db.isOpen).toBe(true);
+    expect(openOpenClawStateDatabase({ path: firstPath })).toBe(first);
+    expect(readSqliteNumberPragma(first.db, "user_version")).toBe(1);
+  });
+
   it("uses savepoints for nested write transaction rollback", () => {
     const stateDir = createTempStateDir();
     const options = { env: { OPENCLAW_STATE_DIR: stateDir } };
