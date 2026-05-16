@@ -3,7 +3,7 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loadPersistedAuthProfileStateFromDatabase } from "../../../agents/auth-profiles/state.js";
 import { readStoredModelsConfigRaw } from "../../../agents/models-config-store.js";
-import { loadCommitmentStore } from "../../../commitments/store.js";
+import { loadCommitmentStore, saveCommitmentStore } from "../../../commitments/store.js";
 import { readConfigHealthStateFromSqlite } from "../../../config/health-state.js";
 import { resolveOAuthDir } from "../../../config/paths.js";
 import { loadDeviceAuthStore } from "../../../infra/device-auth-store.js";
@@ -204,6 +204,29 @@ describe("maybeRepairLegacyRuntimeStateFiles", () => {
           })}\n`,
           "utf8",
         );
+        await saveCommitmentStore({
+          version: 1,
+          commitments: [
+            {
+              id: "cm_sqlite",
+              agentId: "main",
+              sessionKey: "agent:main:telegram:sender-2",
+              channel: "telegram",
+              kind: "event_check_in",
+              sensitivity: "routine",
+              source: "inferred_user_context",
+              status: "pending",
+              reason: "SQLite-only check in.",
+              suggestedText: "Still good?",
+              dedupeKey: "sqlite-check-in",
+              confidence: 0.8,
+              dueWindow: { earliestMs: 3, latestMs: 4, timezone: "UTC" },
+              createdAtMs: 3,
+              updatedAtMs: 3,
+              attempts: 0,
+            },
+          ],
+        });
         await fs.mkdir(path.join(stateDir, "push"), { recursive: true });
         await fs.writeFile(
           path.join(stateDir, "push", "web-push-subscriptions.json"),
@@ -512,14 +535,23 @@ describe("maybeRepairLegacyRuntimeStateFiles", () => {
         ).rejects.toMatchObject({ code: "ENOENT" });
         await expect(loadCommitmentStore()).resolves.toEqual({
           version: 1,
-          commitments: [
+          commitments: expect.arrayContaining([
+            expect.objectContaining({
+              id: "cm_sqlite",
+              dedupeKey: "sqlite-check-in",
+            }),
             expect.objectContaining({
               id: "cm_legacy",
               dedupeKey: "legacy-check-in",
             }),
-          ],
+          ]),
         });
-        expect((await loadCommitmentStore()).commitments[0]).not.toHaveProperty("sourceUserText");
+        const importedCommitmentStore = await loadCommitmentStore();
+        expect(importedCommitmentStore.commitments).toHaveLength(2);
+        const legacyCommitment = importedCommitmentStore.commitments.find(
+          ({ id }) => id === "cm_legacy",
+        );
+        expect(legacyCommitment).not.toHaveProperty("sourceUserText");
         await expect(fs.stat(path.join(commitmentsDir, "commitments.json"))).rejects.toMatchObject({
           code: "ENOENT",
         });

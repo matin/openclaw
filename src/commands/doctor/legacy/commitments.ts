@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { saveCommitmentStore } from "../../../commitments/store.js";
+import { loadCommitmentStore, saveCommitmentStore } from "../../../commitments/store.js";
 import type { CommitmentRecord, CommitmentStoreSnapshot } from "../../../commitments/types.js";
 import { resolveStateDir } from "../../../config/paths.js";
 
@@ -93,8 +93,20 @@ export async function importLegacyCommitmentStoreFileToSqlite(
     }
     throw err;
   }
-  const store = coerceCommitmentStore(parsed);
-  await saveCommitmentStore(store, { env });
+  const legacyStore = coerceCommitmentStore(parsed);
+  const existingStore = await loadCommitmentStore({ env });
+  const commitmentsById = new Map(
+    existingStore.commitments.map((commitment) => [commitment.id, commitment]),
+  );
+  for (const commitment of legacyStore.commitments) {
+    if (!commitmentsById.has(commitment.id)) {
+      commitmentsById.set(commitment.id, commitment);
+    }
+  }
+  await saveCommitmentStore(
+    { version: STORE_VERSION, commitments: [...commitmentsById.values()] },
+    { env },
+  );
   await fs.rm(filePath, { force: true }).catch(() => undefined);
-  return { imported: true, commitments: store.commitments.length };
+  return { imported: true, commitments: legacyStore.commitments.length };
 }
