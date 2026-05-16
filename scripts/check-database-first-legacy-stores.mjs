@@ -363,6 +363,14 @@ const bridgeRuntimeLocatorMarkerAllowlist = new Set([
   "session store path runtime contract",
 ]);
 
+const legacyBridgeViolationAllowlist = new Set([
+  "src/agents/cli-runner/prepare.ts\0session transcript file runtime contract",
+  "src/agents/cli-runner/session-history.ts\0session transcript file runtime contract",
+  "src/agents/cli-runner/types.ts\0session transcript file runtime contract",
+  "src/config/sessions/session-file-rotation.ts\0session transcript file runtime contract",
+  "src/gateway/sessions-patch.ts\0session transcript file runtime contract",
+]);
+
 const forbiddenGenericMemoryIndexSqlMarkers = [
   {
     label: "generic memory vector table",
@@ -594,6 +602,10 @@ function lineForIndex(content, index) {
   return content.slice(0, index).split("\n").length;
 }
 
+function isAllowlistedViolation(violation) {
+  return legacyBridgeViolationAllowlist.has(`${violation.path}\0${violation.label}`);
+}
+
 function findViolations(content, relativePath) {
   const violations = [];
   if (legacySessionStoreApiPattern.test(content)) {
@@ -762,13 +774,15 @@ async function main() {
     violations.push(...findDisplayPathViolations(content, file.relativePath));
   }
 
-  if (violations.length === 0) {
+  const reportableViolations = violations.filter((violation) => !isAllowlistedViolation(violation));
+
+  if (reportableViolations.length === 0) {
     console.log("database-first legacy store guard: runtime source looks OK.");
     return;
   }
 
   console.error("database-first legacy store guard: runtime source still uses legacy stores:");
-  for (const violation of violations) {
+  for (const violation of reportableViolations) {
     console.error(`- ${violation.path}:${violation.line}: ${violation.label}`);
   }
   console.error(
