@@ -212,6 +212,7 @@ function projectTypedSessionColumns(row: SessionEntryRow): SessionEntry | null {
       to: conversationTo,
       ...((conversationChannel ?? channel) ? { channel: conversationChannel ?? channel } : {}),
       ...(conversationAccountId ? { accountId: conversationAccountId } : {}),
+      ...(chatType ? { chatType } : {}),
       ...(conversationThreadId ? { threadId: conversationThreadId } : {}),
     };
   }

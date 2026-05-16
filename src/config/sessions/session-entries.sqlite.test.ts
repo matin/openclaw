@@ -116,6 +116,47 @@ describe("SQLite session row backend", () => {
     });
   });
 
+  it("converts legacy origin routing into delivery context before stripping shadows", () => {
+    const stateDir = createTempDir();
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    const legacyEntry = {
+      sessionId: "legacy-origin-session",
+      updatedAt: 200,
+      origin: {
+        provider: "discord",
+        to: " user:U1 ",
+        accountId: " work ",
+        chatType: "direct",
+        threadId: " thread-1 ",
+      },
+    } as SessionEntry & { origin: unknown };
+
+    upsertSessionEntry({
+      agentId: "ops",
+      env,
+      sessionKey: "discord:legacy-origin",
+      entry: legacyEntry,
+    });
+
+    const loaded = getSessionEntry({
+      agentId: "ops",
+      env,
+      sessionKey: "discord:legacy-origin",
+    });
+    expect((loaded as { origin?: unknown }).origin).toBeUndefined();
+    expect(loaded).toMatchObject({
+      sessionId: "legacy-origin-session",
+      chatType: "direct",
+      deliveryContext: {
+        channel: "discord",
+        to: "user:U1",
+        accountId: "work",
+        chatType: "direct",
+        threadId: "thread-1",
+      },
+    });
+  });
+
   it("stores hot session metadata in canonical session roots", () => {
     const stateDir = createTempDir();
     const env = { OPENCLAW_STATE_DIR: stateDir };

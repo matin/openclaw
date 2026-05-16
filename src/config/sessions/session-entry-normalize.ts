@@ -1,8 +1,17 @@
 import {
+  mergeDeliveryContext,
   normalizeDeliveryContext,
   normalizeSessionDeliveryFields,
 } from "../../utils/delivery-context.shared.js";
 import { normalizeSessionRuntimeModelFields, type SessionEntry } from "./types.js";
+
+type LegacySessionOrigin = {
+  provider?: unknown;
+  to?: unknown;
+  accountId?: unknown;
+  chatType?: unknown;
+  threadId?: unknown;
+};
 
 type LegacySessionShadows = {
   origin?: unknown;
@@ -12,28 +21,55 @@ type LegacySessionShadows = {
   lastThreadId?: unknown;
 };
 
+function legacyOriginDeliveryContext(origin: unknown): SessionEntry["deliveryContext"] {
+  if (!origin || typeof origin !== "object" || Array.isArray(origin)) {
+    return undefined;
+  }
+  const legacy = origin as LegacySessionOrigin;
+  return normalizeDeliveryContext({
+    channel: typeof legacy.provider === "string" ? legacy.provider : undefined,
+    to: typeof legacy.to === "string" ? legacy.to : undefined,
+    accountId: typeof legacy.accountId === "string" ? legacy.accountId : undefined,
+    chatType:
+      legacy.chatType === "direct" || legacy.chatType === "group" || legacy.chatType === "channel"
+        ? legacy.chatType
+        : undefined,
+    threadId:
+      typeof legacy.threadId === "string" || typeof legacy.threadId === "number"
+        ? legacy.threadId
+        : undefined,
+  });
+}
+
 function normalizeSessionEntryDelivery(entry: SessionEntry): SessionEntry {
   const legacyEntry = entry as SessionEntry & LegacySessionShadows;
+  const originDeliveryContext = legacyOriginDeliveryContext(legacyEntry.origin);
   const normalized = normalizeSessionDeliveryFields({
     channel: entry.channel,
-    deliveryContext: entry.deliveryContext,
+    deliveryContext: mergeDeliveryContext(entry.deliveryContext, originDeliveryContext),
     lastChannel: legacyEntry.lastChannel,
     lastTo: legacyEntry.lastTo,
-    lastAccountId: legacyEntry.lastAccountId,
-    lastThreadId: legacyEntry.lastThreadId,
+    lastAccountId:
+      legacyEntry.lastAccountId ??
+      (typeof originDeliveryContext?.accountId === "string"
+        ? originDeliveryContext.accountId
+        : undefined),
+    lastThreadId: legacyEntry.lastThreadId ?? originDeliveryContext?.threadId,
   });
   const nextDelivery = normalized.deliveryContext;
+  const nextChatType = entry.chatType ?? originDeliveryContext?.chatType;
   const sameDelivery =
     (entry.deliveryContext?.channel ?? undefined) === nextDelivery?.channel &&
     (entry.deliveryContext?.to ?? undefined) === nextDelivery?.to &&
     (entry.deliveryContext?.accountId ?? undefined) === nextDelivery?.accountId &&
+    (entry.deliveryContext?.chatType ?? undefined) === nextDelivery?.chatType &&
     (entry.deliveryContext?.threadId ?? undefined) === nextDelivery?.threadId;
   const hasLegacyShadows =
     legacyEntry.lastChannel !== undefined ||
     legacyEntry.lastTo !== undefined ||
     legacyEntry.lastAccountId !== undefined ||
     legacyEntry.lastThreadId !== undefined;
-  if (sameDelivery && !hasLegacyShadows) {
+  if (sameDelivery && entry.chatType === nextChatType && !hasLegacyShadows) {
     return entry;
   }
   const {
@@ -45,6 +81,7 @@ function normalizeSessionEntryDelivery(entry: SessionEntry): SessionEntry {
   } = legacyEntry;
   return {
     ...rest,
+    chatType: nextChatType,
     deliveryContext: nextDelivery,
   };
 }

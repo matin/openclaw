@@ -269,7 +269,7 @@ async function expectPendingPairingRequestsIsolatedByAccount(params: {
 describe("pairing store", () => {
   it("skips malformed persisted pairing requests while approving valid codes", async () => {
     await withTempStateDir(async (stateDir) => {
-      const now = new Date("2026-05-16T05:20:00.000Z").toISOString();
+      const now = new Date().toISOString();
       const oauthDir = resolveOAuthDir(process.env, stateDir);
       fsSync.mkdirSync(oauthDir, { recursive: true });
       fsSync.writeFileSync(
