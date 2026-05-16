@@ -162,6 +162,15 @@ describe("agent runtime worker", () => {
     ).rejects.toThrow("boom");
   });
 
+  it("fails immediately when the worker exits before returning a result", async () => {
+    await expect(
+      runPreparedAgentInWorker(createPreparedRun({ timeoutMs: 1000 }), {
+        workerEntryUrl: new URL(backendDataUrl("process.exit(0);")),
+        backendModuleUrl: backendDataUrl("export const backend = { id: 'unused', run() {} };"),
+      }),
+    ).rejects.toThrow("Agent worker exited before returning a result (code 0)");
+  });
+
   it("surfaces parent event handler failures before resolving the worker result", async () => {
     await expect(
       runPreparedAgentInWorker(createPreparedRun(), {

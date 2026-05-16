@@ -94,6 +94,7 @@ export async function runPreparedAgentInWorker(
   try {
     return await new Promise<AgentRunResult>((resolve, reject) => {
       let timeout: ReturnType<typeof setTimeout> | undefined;
+      let receivedTerminalMessage = false;
       const abort = () => {
         rejectOnce(new Error("Agent worker aborted."));
       };
@@ -132,8 +133,8 @@ export async function runPreparedAgentInWorker(
         rejectOnce(error);
       });
       worker.once("exit", (code) => {
-        if (!settled && code !== 0) {
-          rejectOnce(new Error(`Agent worker exited with code ${code}`));
+        if (!settled && !receivedTerminalMessage) {
+          rejectOnce(new Error(`Agent worker exited before returning a result (code ${code})`));
         }
       });
       worker.on("message", (message: AgentWorkerMessage) => {
@@ -144,6 +145,7 @@ export async function runPreparedAgentInWorker(
           return;
         }
         if (message.type === "result") {
+          receivedTerminalMessage = true;
           void eventBus
             .drain()
             .then(() => {
@@ -154,6 +156,7 @@ export async function runPreparedAgentInWorker(
             });
           return;
         }
+        receivedTerminalMessage = true;
         rejectOnce(new Error(message.error));
       });
     });
