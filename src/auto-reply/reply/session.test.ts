@@ -2033,6 +2033,8 @@ describe("initSessionState reset triggers in WhatsApp groups", () => {
     const sessionRowsTarget = await createSessionRowsTarget("openclaw-group-activation-backfill-");
     await replaceSessionRowsForFixtureTarget(sessionRowsTarget, {
       [sessionKey]: {
+        sessionId: "activation-only",
+        updatedAt: Date.now(),
         groupActivation: "always",
       },
     });
@@ -2060,7 +2062,7 @@ describe("initSessionState reset triggers in WhatsApp groups", () => {
     });
 
     expect(result.isNewSession).toBe(false);
-    expect(result.sessionId).toBe(sessionKey);
+    expect(result.sessionId).toBe("activation-only");
     expect(result.sessionEntry.groupActivation).toBe("always");
     expect(result.sessionEntry.sessionId).toBe(result.sessionId);
     expect(typeof result.sessionEntry.updatedAt).toBe("number");
@@ -3007,10 +3009,10 @@ describe("persistSessionUsageUpdate", () => {
   });
 
   it("preserves fresh post-compaction totalTokens across stale usage updates", async () => {
-    const storePath = await createStorePath("openclaw-usage-");
+    const sessionRowsTarget = await createSessionRowsTarget("openclaw-usage-");
     const sessionKey = "main";
     await seedSessionStore({
-      storePath,
+      target: sessionRowsTarget,
       sessionKey,
       entry: {
         sessionId: "s1",
@@ -3021,23 +3023,22 @@ describe("persistSessionUsageUpdate", () => {
     });
 
     await persistSessionUsageUpdate({
-      storePath,
       sessionKey,
       usage: { input: 50_000, output: 5_000, total: 55_000 },
       contextTokensUsed: 200_000,
       preserveFreshTotalTokensOnStaleUsage: true,
     });
 
-    const stored = JSON.parse(await fs.readFile(storePath, "utf-8"));
+    const stored = readSessionRowsForFixtureTarget(sessionRowsTarget);
     expect(stored[sessionKey].totalTokens).toBe(42_000);
     expect(stored[sessionKey].totalTokensFresh).toBe(true);
   });
 
   it("marks older fresh totalTokens stale when no compaction preservation is requested", async () => {
-    const storePath = await createStorePath("openclaw-usage-");
+    const sessionRowsTarget = await createSessionRowsTarget("openclaw-usage-");
     const sessionKey = "main";
     await seedSessionStore({
-      storePath,
+      target: sessionRowsTarget,
       sessionKey,
       entry: {
         sessionId: "s1",
@@ -3048,13 +3049,12 @@ describe("persistSessionUsageUpdate", () => {
     });
 
     await persistSessionUsageUpdate({
-      storePath,
       sessionKey,
       usage: { input: 50_000, output: 5_000, total: 55_000 },
       contextTokensUsed: 200_000,
     });
 
-    const stored = JSON.parse(await fs.readFile(storePath, "utf-8"));
+    const stored = readSessionRowsForFixtureTarget(sessionRowsTarget);
     expect(stored[sessionKey].totalTokens).toBe(42_000);
     expect(stored[sessionKey].totalTokensFresh).toBe(false);
   });
@@ -3422,6 +3422,7 @@ describe("initSessionState internal channel routing preservation", () => {
       channel: "mattermost",
       to: "channel:CHAN1",
       accountId: "default",
+      chatType: "direct",
     });
 
     const persisted = readSessionRowsForFixtureTarget(sessionRowsTarget);
@@ -3491,6 +3492,7 @@ describe("initSessionState internal channel routing preservation", () => {
       channel: "feishu",
       to: "user:ou_sender_1",
       accountId: "default",
+      chatType: "direct",
     });
   });
 

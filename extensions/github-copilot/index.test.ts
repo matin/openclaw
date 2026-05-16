@@ -353,7 +353,7 @@ describe("github-copilot plugin", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     _setGitHubCopilotDeviceFlowFetchGuardForTesting(async (params) => ({
-      response: await fetchMock(params.url, params.init),
+      response: await fetchMock(params.url),
       finalUrl: params.url,
       release: async () => {},
     }));

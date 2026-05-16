@@ -180,7 +180,7 @@ describe("cron service store seam coverage", () => {
     expect(findJobOrThrow(state, "reload-cron-expr-job").state.nextRunAtMs).toBe(dueNextRunAtMs);
   });
 
-  it("keeps a force-reloaded legacy string schedule for runtime repair handling", async () => {
+  it("rejects a force-reloaded legacy string schedule before persistence", async () => {
     const { storeKey } = await makeStoreKey();
     const staleNextRunAtMs = STORE_TEST_NOW + 3_600_000;
 
@@ -193,21 +193,21 @@ describe("cron service store seam coverage", () => {
     const state = createStoreTestState(storeKey);
     await ensureLoaded(state, { skipRecompute: true });
 
-    await writeSingleJobStore(storeKey, {
-      ...createReloadCronJob({
-        updatedAtMs: STORE_TEST_NOW,
-        state: { nextRunAtMs: staleNextRunAtMs },
+    await expect(
+      writeSingleJobStore(storeKey, {
+        ...createReloadCronJob({
+          updatedAtMs: STORE_TEST_NOW,
+          state: { nextRunAtMs: staleNextRunAtMs },
+        }),
+        schedule: "0 17 * * *",
       }),
-      schedule: "0 17 * * *",
-    });
+    ).rejects.toThrow(/schedule_kind/);
 
-    await expect(ensureLoaded(state, { forceReload: true, skipRecompute: true })).resolves.toBe(
-      undefined,
-    );
+    await ensureLoaded(state, { forceReload: true, skipRecompute: true });
 
     const job = findJobOrThrow(state, "reload-cron-expr-job");
-    expect(job.schedule).toBe("0 17 * * *");
-    expect(job.state.nextRunAtMs).toBeUndefined();
+    expect(job.schedule).toEqual({ kind: "cron", expr: "0 6 * * *", tz: "UTC" });
+    expect(job.state.nextRunAtMs).toBe(staleNextRunAtMs);
   });
 
   it("preserves nextRunAtMs after force reload when scheduling inputs are unchanged", async () => {
@@ -215,7 +215,9 @@ describe("cron service store seam coverage", () => {
     const originalNextRunAtMs = STORE_TEST_NOW + 3_600_000;
 
     await writeSingleJobStore(storeKey, {
-      ...createReloadCronJob({ state: { nextRunAtMs: originalNextRunAtMs } }),
+      ...createReloadCronJob({
+        state: { nextRunAtMs: originalNextRunAtMs },
+      }),
     });
 
     const state = createStoreTestState(storeKey);
