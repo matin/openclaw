@@ -112,7 +112,7 @@ function stripTrailingEllipsis(text: string): string {
 const MIN_TRUNCATED_FINAL_PREFIX_CHARS = 48;
 const MIN_TRUNCATED_FINAL_CONTINUATION_CHARS = 24;
 
-function isPotentialTruncatedFinal(finalText: string): boolean {
+export function isPotentialTruncatedFinal(finalText: string): boolean {
   const trimmedFinal = finalText.trimEnd();
   const untruncatedFinal = stripTrailingEllipsis(trimmedFinal);
   return (
@@ -120,7 +120,7 @@ function isPotentialTruncatedFinal(finalText: string): boolean {
   );
 }
 
-function selectLongerPreviewForFinal(params: {
+export function selectLongerFinalText(params: {
   finalText: string;
   candidateTexts: readonly (string | undefined)[];
 }): string | undefined {
@@ -191,7 +191,7 @@ export function createLaneTextDeliverer(params: CreateLaneTextDelivererParams) {
 
     const retainedPreview =
       isFinal && remainingChunks.length === 0 && isPotentialTruncatedFinal(text)
-        ? selectLongerPreviewForFinal({
+        ? selectLongerFinalText({
             finalText: text,
             candidateTexts: [
               await params.resolveFinalTextCandidate?.({ finalText: text, laneName }),
