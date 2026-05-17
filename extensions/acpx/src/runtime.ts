@@ -52,6 +52,14 @@ type ResetAwareSessionStore = AcpSessionStore & {
   markFresh: (sessionKey: string) => void;
 };
 
+function withOpenClawManagedTurnTimeout<T extends object>(input: T): T & { timeoutMs: 0 } {
+  // OpenClaw owns ACP turn deadlines; delegate timeouts can mark partial turns done early.
+  return {
+    ...input,
+    timeoutMs: 0,
+  };
+}
+
 const ACPX_SESSION_STORE_PLUGIN_ID = "acpx";
 const ACPX_SESSION_STORE_NAMESPACE = "runtime-sessions";
 const ACPX_SESSION_STORE_MAX_ENTRIES = 10_000;
@@ -1019,7 +1027,7 @@ export class AcpxRuntime implements AcpRuntime {
     const command = await this.resolveCommandForHandle(input.handle);
     const delegate = await this.resolveDelegateForHandle(input.handle);
     try {
-      for await (const event of delegate.runTurn(input)) {
+      for await (const event of delegate.runTurn(withOpenClawManagedTurnTimeout(input))) {
         if (
           event.type !== "error" ||
           !isCodexAcpCommand(command) ||
@@ -1065,7 +1073,7 @@ export class AcpxRuntime implements AcpRuntime {
       try {
         return {
           command,
-          turn: delegate.startTurn(input),
+          turn: delegate.startTurn(withOpenClawManagedTurnTimeout(input)),
         };
       } catch (error) {
         if (!isCodexAcpCommand(command) || !isGenericInternalAcpError(error)) {
