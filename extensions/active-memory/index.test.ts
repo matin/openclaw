@@ -1207,6 +1207,34 @@ describe("active-memory plugin", () => {
     expectPrependContextResult(result);
   });
 
+  it("matches prefixed allowedChatIds against normalized conversation ids", async () => {
+    seedSessionEntry("agent:main:feishu:group:oc_prefixed_group", {
+      chatType: "group",
+      channel: "feishu",
+      groupId: "oc_prefixed_group",
+    });
+    api.pluginConfig = {
+      agents: ["main"],
+      allowedChatTypes: ["group"],
+      allowedChatIds: ["group:OC_PREFIXED_GROUP"],
+    };
+    plugin.register(api as unknown as OpenClawPluginApi);
+
+    const result = await hooks.before_prompt_build(
+      { prompt: "hi", messages: [] },
+      {
+        agentId: "main",
+        trigger: "user",
+        sessionKey: "agent:main:feishu:group:oc_prefixed_group",
+        messageProvider: "feishu",
+        channelId: "feishu",
+      },
+    );
+
+    expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(1);
+    expectPrependContextResult(result);
+  });
+
   it("skips sessions whose conversation id is in deniedChatIds even when chat type is allowed", async () => {
     seedSessionEntry("agent:main:feishu:group:oc_blocked_group", {
       chatType: "group",
@@ -1226,6 +1254,34 @@ describe("active-memory plugin", () => {
         agentId: "main",
         trigger: "user",
         sessionKey: "agent:main:feishu:group:oc_blocked_group",
+        messageProvider: "feishu",
+        channelId: "feishu",
+      },
+    );
+
+    expect(runEmbeddedPiAgent).not.toHaveBeenCalled();
+    expect(result).toBeUndefined();
+  });
+
+  it("matches prefixed deniedChatIds against normalized conversation ids", async () => {
+    seedSessionEntry("agent:main:feishu:direct:ou_prefixed_blocked_user", {
+      chatType: "direct",
+      channel: "feishu",
+      nativeDirectUserId: "ou_prefixed_blocked_user",
+    });
+    api.pluginConfig = {
+      agents: ["main"],
+      allowedChatTypes: ["direct"],
+      deniedChatIds: ["user:OU_PREFIXED_BLOCKED_USER"],
+    };
+    plugin.register(api as unknown as OpenClawPluginApi);
+
+    const result = await hooks.before_prompt_build(
+      { prompt: "hi", messages: [] },
+      {
+        agentId: "main",
+        trigger: "user",
+        sessionKey: "agent:main:feishu:direct:ou_prefixed_blocked_user",
         messageProvider: "feishu",
         channelId: "feishu",
       },

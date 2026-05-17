@@ -407,15 +407,15 @@ function normalizeChatIdList(value: unknown): string[] {
     if (typeof entry !== "string") {
       continue;
     }
-    const trimmed = entry.trim().toLowerCase();
-    if (!trimmed) {
+    const normalized = normalizeConversationIdValue(entry);
+    if (!normalized) {
       continue;
     }
-    if (seen.has(trimmed)) {
+    if (seen.has(normalized)) {
       continue;
     }
-    seen.add(trimmed);
-    out.push(trimmed);
+    seen.add(normalized);
+    out.push(normalized);
   }
   return out;
 }
