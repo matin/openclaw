@@ -37,4 +37,14 @@ struct HealthDecodeTests {
 
         #expect(decoded.databasePath == "/tmp/sessions.json")
     }
+
+    @Test func `health sessions decode legacy path field`() {
+        let data = Data(
+            """
+            {"ts":1733622000,"durationMs":420,"channels":{},"channelOrder":[],"heartbeatSeconds":60,"sessions":{"path":"/tmp/sessions.json","count":0,"recent":[]}}
+            """.utf8)
+        let snap = decodeHealthSnapshot(from: data)
+
+        #expect(snap?.sessions.databasePath == "/tmp/sessions.json")
+    }
 }
