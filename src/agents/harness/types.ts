@@ -50,6 +50,62 @@ export type AgentHarnessResetParams = {
   reason?: "new" | "reset" | "idle" | "daily" | "compaction" | "deleted" | "unknown";
 };
 
+export type AgentHarnessStatusProbePhaseStatus =
+  | "ok"
+  | "skipped"
+  | "auth"
+  | "rate_limit"
+  | "billing"
+  | "timeout"
+  | "format"
+  | "unknown"
+  | "no_model";
+
+export type AgentHarnessStatusProbePhase = {
+  status: AgentHarnessStatusProbePhaseStatus;
+  reasonCode?: string;
+  error?: string;
+  latencyMs?: number;
+};
+
+export type AgentHarnessStatusProbeResult = {
+  harnessId: string;
+  provider: string;
+  model?: string;
+  effectiveFor?: string[];
+  selectedProfile?: string;
+  effectiveOrder?: string[];
+  authSource?: "profile" | "env" | "native" | "none";
+  oauthMetadata?: "ok" | "missing" | "not_applicable" | "unknown";
+  refreshProbe?: AgentHarnessStatusProbePhase;
+  appServerProbe?: AgentHarnessStatusProbePhase;
+  trivialTurnProbe?: AgentHarnessStatusProbePhase;
+  lastRuntimeFailure?: {
+    reason?: string;
+    at?: number;
+    message?: string;
+  };
+  fallbackChain?: Array<{
+    model: string;
+    status: AgentHarnessStatusProbePhaseStatus;
+    reason?: string;
+  }>;
+};
+
+export type AgentHarnessStatusProbeParams = {
+  config: import("../../config/types.openclaw.js").OpenClawConfig;
+  agentDir: string;
+  workspaceDir: string;
+  agentId?: string;
+  provider: string;
+  modelId?: string;
+  authProfileId?: string;
+  timeoutMs: number;
+  maxTokens: number;
+  effectiveFor?: string[];
+  fallbackModels?: string[];
+};
+
 export type AgentHarnessResultClassification =
   | "ok"
   | NonNullable<AgentHarnessAttemptResult["agentHarnessResultClassification"]>;
@@ -69,6 +125,9 @@ export type AgentHarness = {
   deliveryDefaults?: AgentHarnessDeliveryDefaults;
   supports(ctx: AgentHarnessSupportContext): AgentHarnessSupport;
   runAttempt(params: AgentHarnessAttemptParams): Promise<AgentHarnessAttemptResult>;
+  statusProbe?(
+    params: AgentHarnessStatusProbeParams,
+  ): Promise<AgentHarnessStatusProbeResult | undefined>;
   runSideQuestion?(params: AgentHarnessSideQuestionParams): Promise<AgentHarnessSideQuestionResult>;
   classify?(
     result: AgentHarnessAttemptResult,

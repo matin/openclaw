@@ -43,6 +43,10 @@ export function createCodexAppServerAgentHarness(options?: {
         nativeHookRelay: { enabled: true },
       });
     },
+    statusProbe: async (params) => {
+      const { runCodexAppServerStatusProbe } = await import("./src/app-server/diagnostics.js");
+      return runCodexAppServerStatusProbe({ ...params, pluginConfig: options?.pluginConfig });
+    },
     runSideQuestion: async (params) => {
       const { runCodexAppServerSideQuestion } = await import("./src/app-server/side-question.js");
       return runCodexAppServerSideQuestion(params, { pluginConfig: options?.pluginConfig });

@@ -8,6 +8,7 @@ import {
 import {
   type AuthProfileCredential,
   type AuthProfileEligibilityReasonCode,
+  type AuthProfileStore,
   externalCliDiscoveryScoped,
   ensureAuthProfileStore,
   listProfilesForProvider,
@@ -16,6 +17,8 @@ import {
   resolveAuthProfileOrder,
 } from "../../agents/auth-profiles.js";
 import { describeFailoverError } from "../../agents/failover-error.js";
+import { resolveAgentHarnessPolicy } from "../../agents/harness/policy.js";
+import type { AgentHarnessStatusProbeResult } from "../../agents/harness/types.js";
 import { hasUsableCustomProviderApiKey, resolveEnvApiKey } from "../../agents/model-auth.js";
 import { loadModelCatalog } from "../../agents/model-catalog.js";
 import {
@@ -23,6 +26,7 @@ import {
   normalizeProviderId,
   parseModelRef,
 } from "../../agents/model-selection.js";
+import { openAIProviderUsesCodexRuntimeByDefault } from "../../agents/openai-codex-routing.js";
 import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
 import {
   resolveSessionTranscriptPath,
@@ -36,13 +40,29 @@ import { redactSecrets } from "../status-all/format.js";
 import { DEFAULT_PROVIDER, formatMs } from "./shared.js";
 
 const PROBE_PROMPT = "Reply with OK. Do not use tools.";
+const CODEX_PROVIDER_ID = "codex";
+const OPENAI_CODEX_PROVIDER_ID = "openai-codex";
 
 const embeddedRunnerModuleLoader = createLazyImportLoader(
   () => import("../../agents/pi-embedded.js"),
 );
+const harnessSelectionModuleLoader = createLazyImportLoader(
+  () => import("../../agents/harness/selection.js"),
+);
+const harnessRuntimePluginModuleLoader = createLazyImportLoader(
+  () => import("../../agents/harness/runtime-plugin.js"),
+);
 
 function loadEmbeddedRunnerModule() {
   return embeddedRunnerModuleLoader.load();
+}
+
+function loadHarnessSelectionModule() {
+  return harnessSelectionModuleLoader.load();
+}
+
+function loadHarnessRuntimePluginModule() {
+  return harnessRuntimePluginModuleLoader.load();
 }
 
 export type AuthProbeStatus =
@@ -75,6 +95,7 @@ export type AuthProbeResult = {
   reasonCode?: AuthProbeReasonCode;
   error?: string;
   latencyMs?: number;
+  runtimeProbe?: AgentHarnessStatusProbeResult;
 };
 
 type AuthProbeTarget = {
@@ -200,6 +221,172 @@ function selectProbeModel(params: {
   return null;
 }
 
+function dedupeProfileIds(profileIds: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const profileId of profileIds) {
+    const trimmed = profileId.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function resolveCodexEnvApiKey(
+  cfg: OpenClawConfig,
+  workspaceDir: string | undefined,
+): ReturnType<typeof resolveEnvApiKey> {
+  return (
+    resolveEnvApiKey(OPENAI_CODEX_PROVIDER_ID, process.env, {
+      config: cfg,
+      workspaceDir,
+    }) ??
+    (process.env.CODEX_API_KEY?.trim()
+      ? { apiKey: process.env.CODEX_API_KEY, source: "env: CODEX_API_KEY" }
+      : null) ??
+    resolveEnvApiKey("openai", process.env, {
+      config: cfg,
+      workspaceDir,
+    })
+  );
+}
+
+function isOpenAiProfile(profile: AuthProfileCredential | undefined): boolean {
+  return normalizeProviderId(profile?.provider ?? "") === "openai";
+}
+
+function isCodexAppServerProbeProvider(providerKey: string): boolean {
+  return providerKey === CODEX_PROVIDER_ID || providerKey === OPENAI_CODEX_PROVIDER_ID;
+}
+
+function providerUsesCodexAppServerProbe(params: {
+  providerKey: string;
+  cfg: OpenClawConfig;
+}): boolean {
+  return (
+    isCodexAppServerProbeProvider(params.providerKey) ||
+    openAIProviderUsesCodexRuntimeByDefault({
+      provider: params.providerKey,
+      config: params.cfg,
+    })
+  );
+}
+
+function selectProbeModelForProvider(params: {
+  provider: string;
+  candidates: Map<string, string[]>;
+  catalog: Array<{ provider: string; id: string }>;
+}): { provider: string; model: string } | null {
+  const direct = selectProbeModel(params);
+  if (direct || !isCodexAppServerProbeProvider(params.provider)) {
+    return direct;
+  }
+  const alternateProvider =
+    params.provider === CODEX_PROVIDER_ID ? OPENAI_CODEX_PROVIDER_ID : CODEX_PROVIDER_ID;
+  const alternate = selectProbeModel({
+    ...params,
+    provider: alternateProvider,
+  });
+  return alternate ? { provider: params.provider, model: alternate.model } : null;
+}
+
+function resolveProbeAuthProviderKey(providerKey: string): string {
+  return isCodexAppServerProbeProvider(providerKey) ? OPENAI_CODEX_PROVIDER_ID : providerKey;
+}
+
+function resolveCodexProbeRuntimeOverride(params: {
+  providerKey: string;
+  modelId?: string;
+  cfg: OpenClawConfig;
+  agentId?: string;
+}): "codex" | undefined {
+  if (!providerUsesCodexAppServerProbe(params)) {
+    return undefined;
+  }
+  const policy = resolveAgentHarnessPolicy({
+    provider: params.providerKey,
+    modelId: params.modelId,
+    config: params.cfg,
+    agentId: params.agentId,
+  });
+  return policy.runtime === "auto" || policy.runtime === "codex" ? "codex" : undefined;
+}
+
+function resolveExternalCliProbeProviderIds(params: {
+  providers: string[];
+  cfg: OpenClawConfig;
+}): string[] {
+  const providerIds = new Set<string>();
+  for (const provider of params.providers) {
+    if (provider.trim()) {
+      providerIds.add(provider);
+    }
+    const providerKey = normalizeProviderId(provider);
+    if (providerKey) {
+      providerIds.add(providerKey);
+    }
+    if (
+      providerUsesCodexAppServerProbe({
+        providerKey,
+        cfg: params.cfg,
+      })
+    ) {
+      providerIds.add(OPENAI_CODEX_PROVIDER_ID);
+    }
+  }
+  return [...providerIds];
+}
+
+function isIncompatibleCodexOpenAiBackupProfile(params: {
+  usesCodexAppServerRuntime: boolean;
+  profile?: AuthProfileCredential;
+}): boolean {
+  return (
+    params.usesCodexAppServerRuntime &&
+    isOpenAiProfile(params.profile) &&
+    params.profile?.type !== "api_key"
+  );
+}
+
+function mergeAliasOrderWithNativeProfiles(params: {
+  aliasOrder: string[];
+  nativeProfiles: string[];
+}): string[] {
+  const nativeIds = new Set(params.nativeProfiles);
+  const aliasHasNativeProfile = params.aliasOrder.some((profileId) => nativeIds.has(profileId));
+  return dedupeProfileIds(
+    aliasHasNativeProfile
+      ? [...params.aliasOrder, ...params.nativeProfiles]
+      : [...params.nativeProfiles, ...params.aliasOrder],
+  );
+}
+
+function resolveExplicitProbeAuthOrder(params: {
+  cfg: OpenClawConfig;
+  store: AuthProfileStore;
+  providerKey: string;
+}): string[] | undefined {
+  const directOrder =
+    findNormalizedProviderValue(params.store.order, params.providerKey) ??
+    findNormalizedProviderValue(params.cfg?.auth?.order, params.providerKey);
+  if (directOrder || params.providerKey !== "openai-codex") {
+    return directOrder;
+  }
+  const aliasOrder =
+    findNormalizedProviderValue(params.store.order, "openai") ??
+    findNormalizedProviderValue(params.cfg?.auth?.order, "openai");
+  if (!aliasOrder) {
+    return undefined;
+  }
+  return mergeAliasOrderWithNativeProfiles({
+    aliasOrder,
+    nativeProfiles: listProfilesForProvider(params.store, params.providerKey),
+  });
+}
+
 function mapEligibilityReasonToProbeReasonCode(
   reasonCode: AuthProfileEligibilityReasonCode,
 ): AuthProbeReasonCode {
@@ -257,6 +444,94 @@ function formatUnresolvedRefProbeError(refLabel: string): string {
   return `${legacyLine}\n↳ Auth reason [unresolved_ref]: could not resolve SecretRef "${refLabel}".`;
 }
 
+function redactRuntimeProbe(probe: AgentHarnessStatusProbeResult): AgentHarnessStatusProbeResult {
+  const redactPhase = (
+    phase: AgentHarnessStatusProbeResult["refreshProbe"],
+  ): AgentHarnessStatusProbeResult["refreshProbe"] =>
+    phase?.error ? { ...phase, error: redactSecrets(phase.error) } : phase;
+  return {
+    ...probe,
+    refreshProbe: redactPhase(probe.refreshProbe),
+    appServerProbe: redactPhase(probe.appServerProbe),
+    trivialTurnProbe: redactPhase(probe.trivialTurnProbe),
+    lastRuntimeFailure: probe.lastRuntimeFailure?.message
+      ? {
+          ...probe.lastRuntimeFailure,
+          message: redactSecrets(probe.lastRuntimeFailure.message),
+        }
+      : probe.lastRuntimeFailure,
+  };
+}
+
+async function maybeRunHarnessStatusProbe(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+  agentDir: string;
+  workspaceDir: string;
+  target: AuthProbeTarget;
+  timeoutMs: number;
+  maxTokens: number;
+  fallbackModels: string[];
+}): Promise<AgentHarnessStatusProbeResult | undefined> {
+  if (!params.target.model) {
+    return undefined;
+  }
+  let harnessId = "unavailable";
+  try {
+    const agentHarnessRuntimeOverride = resolveCodexProbeRuntimeOverride({
+      providerKey: params.target.model.provider,
+      modelId: params.target.model.model,
+      cfg: params.cfg,
+      agentId: params.agentId,
+    });
+    const { ensureSelectedAgentHarnessPlugin } = await loadHarnessRuntimePluginModule();
+    await ensureSelectedAgentHarnessPlugin({
+      provider: params.target.model.provider,
+      modelId: params.target.model.model,
+      config: params.cfg,
+      agentId: params.agentId,
+      workspaceDir: params.workspaceDir,
+      ...(agentHarnessRuntimeOverride ? { agentHarnessRuntimeOverride } : {}),
+    });
+    const { selectAgentHarness } = await loadHarnessSelectionModule();
+    const harness = selectAgentHarness({
+      provider: params.target.model.provider,
+      modelId: params.target.model.model,
+      config: params.cfg,
+      agentId: params.agentId,
+      ...(agentHarnessRuntimeOverride ? { agentHarnessRuntimeOverride } : {}),
+    });
+    harnessId = harness.id;
+    if (!harness.statusProbe) {
+      return undefined;
+    }
+    const result = await harness.statusProbe({
+      config: params.cfg,
+      agentDir: params.agentDir,
+      workspaceDir: params.workspaceDir,
+      agentId: params.agentId,
+      provider: params.target.model.provider,
+      modelId: params.target.model.model,
+      authProfileId: params.target.profileId,
+      timeoutMs: params.timeoutMs,
+      maxTokens: params.maxTokens,
+      effectiveFor: [`${params.target.model.provider}/${params.target.model.model}`],
+      fallbackModels: params.fallbackModels,
+    });
+    return result ? redactRuntimeProbe(result) : undefined;
+  } catch (error) {
+    return {
+      harnessId,
+      provider: params.target.model.provider,
+      model: `${params.target.model.provider}/${params.target.model.model}`,
+      appServerProbe: {
+        status: mapFailoverReasonToProbeStatus(describeFailoverError(error).reason),
+        error: redactSecrets(describeFailoverError(error).message),
+      },
+    };
+  }
+}
+
 async function maybeResolveUnresolvedRefIssue(params: {
   cfg: OpenClawConfig;
   profile?: AuthProfileCredential;
@@ -286,18 +561,19 @@ async function maybeResolveUnresolvedRefIssue(params: {
 
 export async function buildProbeTargets(params: {
   cfg: OpenClawConfig;
+  agentId?: string;
   agentDir?: string;
   workspaceDir?: string;
   providers: string[];
   modelCandidates: string[];
   options: AuthProbeOptions;
 }): Promise<{ targets: AuthProbeTarget[]; results: AuthProbeResult[] }> {
-  const { cfg, agentDir, providers, modelCandidates, options, workspaceDir } = params;
+  const { cfg, agentId, agentDir, providers, modelCandidates, options, workspaceDir } = params;
   const store = ensureAuthProfileStore(agentDir, {
     externalCli: externalCliDiscoveryScoped({
       config: cfg,
       allowKeychainPrompt: false,
-      providerIds: providers,
+      providerIds: resolveExternalCliProbeProviderIds({ providers, cfg }),
       profileIds: options.profileIds,
     }),
   });
@@ -316,23 +592,43 @@ export async function buildProbeTargets(params: {
       continue;
     }
 
-    const model = selectProbeModel({
+    const model = selectProbeModelForProvider({
       provider: providerKey,
       candidates,
       catalog,
     });
 
-    const profileIds = listProfilesForProvider(store, providerKey);
-    const explicitOrder = (() => {
-      return (
-        findNormalizedProviderValue(store.order, providerKey) ??
-        findNormalizedProviderValue(cfg?.auth?.order, providerKey)
-      );
-    })();
+    const usesCodexAppServerRuntime = Boolean(
+      resolveCodexProbeRuntimeOverride({
+        providerKey,
+        cfg,
+        modelId: model?.model,
+        agentId,
+      }),
+    );
+    const authProviderKey = usesCodexAppServerRuntime
+      ? OPENAI_CODEX_PROVIDER_ID
+      : resolveProbeAuthProviderKey(providerKey);
+    const explicitOrder = resolveExplicitProbeAuthOrder({
+      cfg,
+      store,
+      providerKey: authProviderKey,
+    });
+    const orderedProfileIds = resolveAuthProfileOrder({ cfg, store, provider: authProviderKey });
+    const requestedOpenAiProfileIds = usesCodexAppServerRuntime
+      ? [...profileFilter].filter((profileId) => isOpenAiProfile(store.profiles[profileId]))
+      : [];
+    const explicitCodexProfileIds =
+      usesCodexAppServerRuntime && Array.isArray(explicitOrder) ? explicitOrder : [];
+    const profileIds = dedupeProfileIds([
+      ...listProfilesForProvider(store, providerKey),
+      ...(authProviderKey === providerKey ? [] : listProfilesForProvider(store, authProviderKey)),
+      ...(usesCodexAppServerRuntime
+        ? [...orderedProfileIds, ...explicitCodexProfileIds, ...requestedOpenAiProfileIds]
+        : []),
+    ]);
     const allowedProfiles =
-      explicitOrder && explicitOrder.length > 0
-        ? new Set(resolveAuthProfileOrder({ cfg, store, provider: providerKey }))
-        : null;
+      explicitOrder && explicitOrder.length > 0 ? new Set(orderedProfileIds) : null;
     const filteredProfiles = profileFilter.size
       ? profileIds.filter((id) => profileFilter.has(id))
       : profileIds;
@@ -356,11 +652,30 @@ export async function buildProbeTargets(params: {
           });
           continue;
         }
+        if (
+          isIncompatibleCodexOpenAiBackupProfile({
+            usesCodexAppServerRuntime,
+            profile,
+          })
+        ) {
+          results.push({
+            provider: providerKey,
+            profileId,
+            model: model ? `${model.provider}/${model.model}` : undefined,
+            label,
+            source: "profile",
+            mode,
+            status: "unknown",
+            reasonCode: "ineligible_profile",
+            error: formatMissingCredentialProbeError("ineligible_profile"),
+          });
+          continue;
+        }
         if (allowedProfiles && !allowedProfiles.has(profileId)) {
           const eligibility = resolveAuthProfileEligibility({
             cfg,
             store,
-            provider: providerKey,
+            provider: authProviderKey,
             profileId,
           });
           const reasonCode = mapEligibilityReasonToProbeReasonCode(eligibility.reasonCode);
@@ -426,10 +741,12 @@ export async function buildProbeTargets(params: {
       continue;
     }
 
-    const envKey = resolveEnvApiKey(providerKey, process.env, {
-      config: cfg,
-      workspaceDir,
-    });
+    const envKey = usesCodexAppServerRuntime
+      ? resolveCodexEnvApiKey(cfg, workspaceDir)
+      : resolveEnvApiKey(providerKey, process.env, {
+          config: cfg,
+          workspaceDir,
+        });
     const hasUsableModelsJsonKey = hasUsableCustomProviderApiKey(cfg, providerKey);
     if (!envKey && !hasUsableModelsJsonKey) {
       continue;
@@ -474,8 +791,19 @@ async function probeTarget(params: {
   target: AuthProbeTarget;
   timeoutMs: number;
   maxTokens: number;
+  fallbackModels: string[];
 }): Promise<AuthProbeResult> {
-  const { cfg, agentId, agentDir, workspaceDir, sessionDir, target, timeoutMs, maxTokens } = params;
+  const {
+    cfg,
+    agentId,
+    agentDir,
+    workspaceDir,
+    sessionDir,
+    target,
+    timeoutMs,
+    maxTokens,
+    fallbackModels,
+  } = params;
   if (!target.model) {
     return {
       provider: target.provider,
@@ -490,6 +818,16 @@ async function probeTarget(params: {
     };
   }
   const model = target.model;
+  const runtimeProbe = await maybeRunHarnessStatusProbe({
+    cfg,
+    agentId,
+    agentDir,
+    workspaceDir,
+    target,
+    timeoutMs,
+    maxTokens,
+    fallbackModels,
+  });
 
   const sessionId = `probe-${target.provider}-${crypto.randomUUID()}`;
   const sessionFile = resolveSessionTranscriptPath(sessionId, agentId);
@@ -506,9 +844,23 @@ async function probeTarget(params: {
     status,
     ...(error ? { error } : {}),
     latencyMs: Date.now() - start,
+    ...(runtimeProbe
+      ? {
+          runtimeProbe: {
+            ...runtimeProbe,
+            trivialTurnProbe: {
+              status,
+              ...(error ? { error } : {}),
+              latencyMs: Date.now() - start,
+            },
+          },
+        }
+      : {}),
   });
   try {
     const { runEmbeddedPiAgent } = await loadEmbeddedRunnerModule();
+    const harnessId = runtimeProbe?.harnessId?.trim();
+    const harnessRuntimeOverride = harnessId === "unavailable" ? undefined : harnessId;
     await runEmbeddedPiAgent({
       sessionId,
       sessionFile,
@@ -519,6 +871,7 @@ async function probeTarget(params: {
       prompt: PROBE_PROMPT,
       provider: target.model.provider,
       model: target.model.model,
+      ...(harnessRuntimeOverride ? { agentHarnessRuntimeOverride: harnessRuntimeOverride } : {}),
       authProfileId: target.profileId,
       authProfileIdSource: target.profileId ? "user" : undefined,
       timeoutMs,
@@ -550,6 +903,7 @@ async function runTargetsWithConcurrency(params: {
   timeoutMs: number;
   maxTokens: number;
   concurrency: number;
+  fallbackModels: string[];
   onProgress?: (update: { completed: number; total: number; label?: string }) => void;
 }): Promise<AuthProbeResult[]> {
   const { cfg, targets, timeoutMs, maxTokens, onProgress } = params;
@@ -591,6 +945,7 @@ async function runTargetsWithConcurrency(params: {
         target,
         timeoutMs,
         maxTokens,
+        fallbackModels: params.fallbackModels,
       });
       results[index] = result;
       completed += 1;
@@ -616,6 +971,7 @@ export async function runAuthProbes(params: {
   const startedAt = Date.now();
   const plan = await buildProbeTargets({
     cfg: params.cfg,
+    agentId: params.agentId,
     agentDir: params.agentDir,
     workspaceDir: params.workspaceDir,
     providers: params.providers,
@@ -636,6 +992,7 @@ export async function runAuthProbes(params: {
         timeoutMs: params.options.timeoutMs,
         maxTokens: params.options.maxTokens,
         concurrency: params.options.concurrency,
+        fallbackModels: params.modelCandidates,
         onProgress: params.onProgress,
       })
     : [];

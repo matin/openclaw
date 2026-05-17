@@ -136,6 +136,18 @@ const mocks = vi.hoisted(() => {
     loadProviderUsageSummary: vi.fn().mockResolvedValue(undefined),
     resolveRuntimeSyntheticAuthProviderRefs: vi.fn().mockReturnValue([]),
     resolveProviderSyntheticAuthWithPlugin: vi.fn().mockReturnValue(undefined),
+    runAuthProbes: vi.fn().mockResolvedValue({
+      startedAt: 1,
+      finishedAt: 2,
+      durationMs: 1,
+      totalTargets: 0,
+      options: {
+        timeoutMs: 8_000,
+        concurrency: 1,
+        maxTokens: 8,
+      },
+      results: [],
+    }),
   };
 });
 
@@ -239,6 +251,9 @@ vi.mock("../../plugins/synthetic-auth.runtime.js", () => ({
 }));
 vi.mock("../../plugins/provider-runtime.js", () => ({
   resolveProviderSyntheticAuthWithPlugin: mocks.resolveProviderSyntheticAuthWithPlugin,
+}));
+vi.mock("./list.probe.js", () => ({
+  runAuthProbes: mocks.runAuthProbes,
 }));
 
 import { buildAuthHealthSummary } from "../../agents/auth-health.js";
@@ -505,6 +520,57 @@ describe("modelsStatusCommand auth overview", () => {
       if (originalLoadConfig) {
         mocks.loadConfig.mockImplementation(originalLoadConfig);
       }
+      if (originalEnvImpl) {
+        mocks.resolveEnvApiKey.mockImplementation(originalEnvImpl);
+      } else if (defaultResolveEnvApiKeyImpl) {
+        mocks.resolveEnvApiKey.mockImplementation(defaultResolveEnvApiKeyImpl);
+      } else {
+        mocks.resolveEnvApiKey.mockImplementation(() => null);
+      }
+    }
+  });
+
+  it("includes an explicit probe provider even when auth discovery did not find it", async () => {
+    const localRuntime = createRuntime();
+    const originalProfiles = { ...mocks.store.profiles };
+    const originalEnvImpl = mocks.resolveEnvApiKey.getMockImplementation();
+    mocks.runAuthProbes.mockClear();
+    mocks.store.profiles = {};
+    mocks.resolveEnvApiKey.mockImplementation((provider: string) =>
+      provider === "openai"
+        ? {
+            apiKey: "sk-openai-0123456789abcdefghijklmnopqrstuvwxyz",
+            source: "shell env: OPENAI_API_KEY",
+          }
+        : null,
+    );
+
+    try {
+      await modelsStatusCommand(
+        {
+          json: true,
+          probe: true,
+          probeProvider: "openai-codex",
+          probeTimeout: "120000",
+          probeConcurrency: "1",
+          probeMaxTokens: "8",
+        },
+        localRuntime as never,
+      );
+
+      expect(mocks.runAuthProbes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providers: expect.arrayContaining(["openai-codex"]),
+          options: expect.objectContaining({
+            provider: "openai-codex",
+            timeoutMs: 120_000,
+            concurrency: 1,
+            maxTokens: 8,
+          }),
+        }),
+      );
+    } finally {
+      mocks.store.profiles = originalProfiles;
       if (originalEnvImpl) {
         mocks.resolveEnvApiKey.mockImplementation(originalEnvImpl);
       } else if (defaultResolveEnvApiKeyImpl) {

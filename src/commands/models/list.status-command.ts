@@ -348,6 +348,7 @@ export async function modelsStatusCommand(
       ...providersFromConfig,
       ...providersFromModels,
       ...providersFromEnv,
+      ...(opts.probe && opts.probeProvider ? [opts.probeProvider] : []),
     ]),
   )
     .map((p) => normalizeOptionalString(p) ?? "")
@@ -945,7 +946,29 @@ export async function modelsStatusCommand(
         const modeLabel = result.mode ? ` ${colorize(rich, theme.muted, `(${result.mode})`)}` : "";
         const profile = `${colorize(rich, theme.accent, result.label)}${modeLabel}`;
         const detail = result.error?.trim();
-        const detailLabel = detail ? `\n${colorize(rich, theme.muted, `↳ ${detail}`)}` : "";
+        const runtimeDetail = result.runtimeProbe
+          ? [
+              `runtime=${result.runtimeProbe.harnessId}`,
+              result.runtimeProbe.selectedProfile
+                ? `selected=${result.runtimeProbe.selectedProfile}`
+                : undefined,
+              result.runtimeProbe.refreshProbe
+                ? `refresh=${result.runtimeProbe.refreshProbe.status}`
+                : undefined,
+              result.runtimeProbe.appServerProbe
+                ? `appServer=${result.runtimeProbe.appServerProbe.status}`
+                : undefined,
+              result.runtimeProbe.trivialTurnProbe
+                ? `turn=${result.runtimeProbe.trivialTurnProbe.status}`
+                : undefined,
+            ]
+              .filter(Boolean)
+              .join(" ")
+          : "";
+        const detailLines = [detail, runtimeDetail].filter(Boolean);
+        const detailLabel = detailLines.length
+          ? `\n${colorize(rich, theme.muted, `↳ ${detailLines.join("\n↳ ")}`)}`
+          : "";
         const statusLabel = `${status}${colorize(rich, theme.muted, ` · ${latency}`)}${detailLabel}`;
         return {
           Model: colorize(rich, theme.heading, modelLabel),

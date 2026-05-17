@@ -5,9 +5,13 @@ import { createCodexAppServerAgentHarness } from "./harness.js";
 import plugin from "./index.js";
 
 const runCodexAppServerAttemptMock = vi.hoisted(() => vi.fn());
+const runCodexAppServerStatusProbeMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./src/app-server/run-attempt.js", () => ({
   runCodexAppServerAttempt: runCodexAppServerAttemptMock,
+}));
+vi.mock("./src/app-server/diagnostics.js", () => ({
+  runCodexAppServerStatusProbe: runCodexAppServerStatusProbeMock,
 }));
 
 function mockCall(mock: { mock: { calls: unknown[][] } }, index = 0) {
@@ -71,6 +75,7 @@ describe("codex plugin", () => {
     expect(agentHarnessRegistration.deliveryDefaults).toEqual({
       sourceVisibleReplies: "message_tool",
     });
+    expect(typeof agentHarnessRegistration.statusProbe).toBe("function");
     expect(typeof agentHarnessRegistration.dispose).toBe("function");
     expect(mediaProviderRegistration?.id).toBe("codex");
     expect(mediaProviderRegistration?.capabilities).toEqual(["image"]);
@@ -144,5 +149,34 @@ describe("codex plugin", () => {
         nativeHookRelay: { enabled: true },
       },
     );
+  });
+
+  it("routes status probes through the Codex app-server diagnostics helper", async () => {
+    const harness = createCodexAppServerAgentHarness({ pluginConfig: { appServer: {} } });
+    const result = { harnessId: "codex", provider: "openai-codex" };
+    runCodexAppServerStatusProbeMock.mockResolvedValueOnce(result);
+
+    await expect(
+      harness.statusProbe?.({
+        config: {},
+        agentDir: "/tmp/agent",
+        workspaceDir: "/tmp/workspace",
+        provider: "openai-codex",
+        modelId: "gpt-5.5",
+        timeoutMs: 1000,
+        maxTokens: 8,
+      }),
+    ).resolves.toBe(result);
+
+    expect(runCodexAppServerStatusProbeMock).toHaveBeenCalledWith({
+      config: {},
+      agentDir: "/tmp/agent",
+      workspaceDir: "/tmp/workspace",
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      timeoutMs: 1000,
+      maxTokens: 8,
+      pluginConfig: { appServer: {} },
+    });
   });
 });
