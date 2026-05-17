@@ -887,6 +887,15 @@ function appendChannelProtectedPolicyChangeReasons(params: {
             `protected-channel-enabled:${formatProtectedConfigPath(accountPath)}`,
           );
         }
+        if (
+          previousAccount.enabled !== false &&
+          nextAccount.enabled === false &&
+          !isExplicitChannelActivationPath(accountPath, params.explicitSetPaths)
+        ) {
+          params.reasons.push(
+            `protected-channel-disabled:${formatProtectedConfigPath(accountPath)}`,
+          );
+        }
       }
     }
     if (
@@ -896,6 +905,14 @@ function appendChannelProtectedPolicyChangeReasons(params: {
       !isExplicitChannelActivationPath(channelPath, params.explicitSetPaths)
     ) {
       params.reasons.push(`protected-channel-enabled:${formatProtectedConfigPath(channelPath)}`);
+    }
+    if (
+      !channelRemoved &&
+      previousChannel.enabled !== false &&
+      nextChannel.enabled === false &&
+      !isExplicitChannelActivationPath(channelPath, params.explicitSetPaths)
+    ) {
+      params.reasons.push(`protected-channel-disabled:${formatProtectedConfigPath(channelPath)}`);
     }
   }
 }

@@ -1080,11 +1080,12 @@ describe("config io write", () => {
         },
         channels: {
           whatsapp: {
-            enabled: true,
+            enabled: false,
             allowFrom: ["+15550001111"],
             groupAllowFrom: ["+15550001111"],
             accounts: {
               default: {
+                enabled: false,
                 allowFrom: ["+15550003333"],
                 groupAllowFrom: ["+15550003333"],
               },
@@ -1130,8 +1131,10 @@ describe("config io write", () => {
           "protected-list-widened:agents.list.main.tools.elevated.allowFrom.webchat",
           "protected-list-shrunk:channels.whatsapp.allowFrom",
           "protected-list-shrunk:channels.whatsapp.groupAllowFrom",
+          "protected-channel-disabled:channels.whatsapp",
           "protected-list-shrunk:channels.whatsapp.accounts.default.allowFrom",
           "protected-list-shrunk:channels.whatsapp.accounts.default.groupAllowFrom",
+          "protected-channel-disabled:channels.whatsapp.accounts.default",
           "protected-channel-enabled:channels.telegram",
           "protected-channel-enabled:channels.telegram.accounts.default",
         ]),

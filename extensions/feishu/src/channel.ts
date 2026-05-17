@@ -1254,8 +1254,23 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
               ...((cfg.channels?.feishu?.accounts ?? {}) as Record<string, unknown>),
               ...((nextCfg.channels?.feishu?.accounts ?? {}) as Record<string, unknown>),
             };
+            const previousAccounts = (cfg.channels?.feishu?.accounts ?? {}) as Record<
+              string,
+              unknown
+            >;
+            const nextAccounts = (nextCfg.channels?.feishu?.accounts ?? {}) as Record<
+              string,
+              unknown
+            >;
             const explicitSetPaths = [
+              ...(nextCfg.channels?.feishu && !cfg.channels?.feishu
+                ? [["channels", "feishu"]]
+                : []),
               ...fields.map((field) => ["channels", "feishu", field]),
+              ...Object.keys(nextAccounts)
+                .filter((accountId) => isRecord(nextAccounts[accountId]))
+                .filter((accountId) => !isRecord(previousAccounts[accountId]))
+                .map((accountId) => ["channels", "feishu", "accounts", accountId]),
               ...Object.keys(accounts).flatMap((accountId) =>
                 fields.map((field) => ["channels", "feishu", "accounts", accountId, field]),
               ),

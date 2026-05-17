@@ -27,14 +27,20 @@ export type ChannelsRemoveOptions = {
   delete?: boolean;
 };
 
-function resolveDeleteWriteOptions(params: {
+function resolveRemoveWriteOptions(params: {
   nextConfig: OpenClawConfig;
   channel: ChatChannel;
   accountId: string;
+  deleteConfig: boolean;
 }): ConfigWriteOptions {
-  const nextChannel = params.nextConfig.channels?.[params.channel];
   const channelPath = ["channels", params.channel] as const;
   const accountPath = [...channelPath, "accounts", params.accountId] as const;
+  if (!params.deleteConfig) {
+    return {
+      explicitSetPaths: [[...channelPath, "enabled"], [...accountPath, "enabled"]],
+    };
+  }
+  const nextChannel = params.nextConfig.channels?.[params.channel];
   return {
     explicitSetPaths: [nextChannel && typeof nextChannel === "object" ? accountPath : channelPath],
   };
@@ -251,13 +257,12 @@ export async function channelsRemoveCommand(
   const shouldMovePluginInstalls = Boolean(
     next.plugins?.installs && Object.keys(next.plugins.installs).length > 0,
   );
-  const writeOptions = deleteConfig
-    ? resolveDeleteWriteOptions({
-        nextConfig: next,
-        channel: resolvedChannelId,
-        accountId: accountKey,
-      })
-    : undefined;
+  const writeOptions = resolveRemoveWriteOptions({
+    nextConfig: next,
+    channel: resolvedChannelId,
+    accountId: accountKey,
+    deleteConfig,
+  });
   if (shouldMovePluginInstalls) {
     const committed = await commitConfigWithPendingPluginInstalls({
       nextConfig: next,
