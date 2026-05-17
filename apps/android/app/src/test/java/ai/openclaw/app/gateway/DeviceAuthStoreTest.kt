@@ -84,6 +84,39 @@ class DeviceAuthStoreTest {
   }
 
   @Test
+  fun loadEntryMigratesAllLegacyRolesBeforeSQLiteRowsExist() {
+    val app = RuntimeEnvironment.getApplication()
+    val prefs = legacyPrefs(app)
+    prefs.putString("gateway.deviceToken.device-1.operator", " operator-token ")
+    prefs.putString(
+      "gateway.deviceTokenMeta.device-1.operator",
+      """{"scopes":["operator.write"],"updatedAtMs":1700000000000}""",
+    )
+    prefs.putString("gateway.deviceToken.device-1.node", " node-token ")
+    prefs.putString(
+      "gateway.deviceTokenMeta.device-1.node",
+      """{"scopes":["node.connect"],"updatedAtMs":1700000000001}""",
+    )
+    val store = DeviceAuthStore(app, legacyPrefsOverride = prefs)
+
+    val operator = store.loadEntry("device-1", "operator")
+    val node = store.loadEntry("device-1", "node")
+
+    assertEquals("operator-token", operator?.token)
+    assertEquals(listOf("operator.write"), operator?.scopes)
+    assertEquals("node-token", node?.token)
+    assertEquals(listOf("node.connect"), node?.scopes)
+    assertEquals(
+      "__openclaw_secure_prefs__",
+      OpenClawSQLiteStateStore(app).readDeviceAuthToken("device-1", "operator")?.token,
+    )
+    assertEquals(
+      "__openclaw_secure_prefs__",
+      OpenClawSQLiteStateStore(app).readDeviceAuthToken("device-1", "node")?.token,
+    )
+  }
+
+  @Test
   fun loadEntryDoesNotResurrectLegacyRoleAfterSQLiteRowsExist() {
     val app = RuntimeEnvironment.getApplication()
     val prefs = legacyPrefs(app)

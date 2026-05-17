@@ -396,6 +396,28 @@ describe("createAcpxRuntimeService", () => {
     await service.stop?.(ctx);
   });
 
+  it("scopes generated wrapper roots by state dir and gateway instance", async () => {
+    const stateDirA = path.join(await makeTempDir(), "state");
+    const stateDirB = path.join(await makeTempDir(), "state");
+
+    const rootA1 = resolveAcpxWrapperRoot({
+      gatewayInstanceId: "gw-a",
+      stateDir: stateDirA,
+    });
+    const rootA2 = resolveAcpxWrapperRoot({
+      gatewayInstanceId: "gw-b",
+      stateDir: stateDirA,
+    });
+    const rootB1 = resolveAcpxWrapperRoot({
+      gatewayInstanceId: "gw-a",
+      stateDir: stateDirB,
+    });
+
+    expect(rootA1).not.toBe(rootA2);
+    expect(rootA1).not.toBe(rootB1);
+    expect(path.dirname(path.dirname(rootA1))).toBe(resolveAcpxWrapperRoot());
+  });
+
   it("runs wrapper-root orphan cleanup before dropping pending ACPX leases", async () => {
     const workspaceDir = await makeTempDir();
     const ctx = createServiceContext(workspaceDir);

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { inspect } from "node:util";
@@ -78,8 +78,28 @@ type CreateAcpxRuntimeServiceParams = {
   processCleanupDeps?: AcpxProcessCleanupDeps;
 };
 
-export function resolveAcpxWrapperRoot(): string {
-  return path.join(resolvePreferredOpenClawTmpDir(), "acpx");
+function sanitizeWrapperRootSegment(value: string, fallback: string): string {
+  const segment = value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return segment || fallback;
+}
+
+function hashWrapperRootStateDir(stateDir: string): string {
+  return createHash("sha256").update(path.resolve(stateDir)).digest("hex").slice(0, 16);
+}
+
+export function resolveAcpxWrapperRoot(params?: {
+  gatewayInstanceId: string;
+  stateDir: string;
+}): string {
+  const baseRoot = path.join(resolvePreferredOpenClawTmpDir(), "acpx");
+  if (!params) {
+    return baseRoot;
+  }
+  return path.join(
+    baseRoot,
+    hashWrapperRootStateDir(params.stateDir),
+    sanitizeWrapperRootSegment(params.gatewayInstanceId, "gateway"),
+  );
 }
 
 function loadRuntimeModule(): Promise<AcpxRuntimeModule> {
@@ -533,7 +553,13 @@ export function createAcpxRuntimeService(
         ...basePluginConfig,
         probeAgent: basePluginConfig.probeAgent ?? resolveAllowedAgentsProbeAgent(ctx),
       };
-      const wrapperRoot = resolveAcpxWrapperRoot();
+      const gatewayInstanceId = await measureAcpxStartup(ctx, "gateway-instance-id", () =>
+        resolveGatewayInstanceId(),
+      );
+      const wrapperRoot = resolveAcpxWrapperRoot({
+        gatewayInstanceId,
+        stateDir: ctx.stateDir,
+      });
       const pluginConfig = await measureAcpxStartup(ctx, "config.prepare-codex-auth", () =>
         prepareAcpxCodexAuthConfig({
           pluginConfig: effectiveBasePluginConfig,
@@ -544,9 +570,6 @@ export function createAcpxRuntimeService(
       await measureAcpxStartup(ctx, "filesystem.prepare", async () => {
         await fs.mkdir(wrapperRoot, { recursive: true });
       });
-      const gatewayInstanceId = await measureAcpxStartup(ctx, "gateway-instance-id", () =>
-        resolveGatewayInstanceId(),
-      );
       const processLeaseStore = createAcpxProcessLeaseStore();
       const startupReap = await measureAcpxStartup(ctx, "process-leases.reap", () =>
         reapOpenAcpxProcessLeases({

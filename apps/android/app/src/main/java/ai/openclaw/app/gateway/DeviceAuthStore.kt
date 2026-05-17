@@ -203,7 +203,22 @@ class DeviceAuthStore private constructor(
       removeLegacyEntry(normalizedDevice, normalizedRole)
       return null
     }
-    return migrateLegacyEntry(normalizedDevice, normalizedRole)
+    return migrateLegacyEntriesForDevice(normalizedDevice)[normalizedRole]
+  }
+
+  private fun migrateLegacyEntriesForDevice(normalizedDevice: String): Map<String, DeviceAuthEntry> {
+    val prefix = tokenKeyPrefix(normalizedDevice)
+    return legacyPrefs
+      .keysWithPrefix(prefix)
+      .mapNotNull { key ->
+        val role = normalizeRole(key.removePrefix(prefix))
+        if (role.isEmpty()) {
+          null
+        } else {
+          migrateLegacyEntry(normalizedDevice, role)?.let { role to it }
+        }
+      }
+      .toMap()
   }
 
   private fun migrateLegacyEntry(
