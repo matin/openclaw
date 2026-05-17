@@ -275,6 +275,41 @@ describe("session cost usage", () => {
     });
   });
 
+  it("computes time-series cumulative usage after timestamp sorting", async () => {
+    const root = await makeRoot("timeseries-skewed");
+    await withStateDir(root, async () => {
+      writeTranscript({
+        sessionId: "sess-skewed",
+        events: [
+          assistantUsage({
+            timestamp: "2026-02-05T12:00:10.000Z",
+            input: 10,
+            output: 5,
+            cost: 0.015,
+          }),
+          assistantUsage({
+            timestamp: "2026-02-05T12:00:00.000Z",
+            input: 2,
+            output: 3,
+            cost: 0.005,
+          }),
+        ],
+      });
+
+      const timeseries = await loadSessionUsageTimeSeries({
+        sessionId: "sess-skewed",
+      });
+
+      expect(timeseries?.points.map((point) => point.timestamp)).toEqual([
+        Date.parse("2026-02-05T12:00:00.000Z"),
+        Date.parse("2026-02-05T12:00:10.000Z"),
+      ]);
+      expect(timeseries?.points.map((point) => point.cumulativeTokens)).toEqual([5, 20]);
+      expect(timeseries?.points[0]?.cumulativeCost).toBeCloseTo(0.005, 6);
+      expect(timeseries?.points[1]?.cumulativeCost).toBeCloseTo(0.02, 6);
+    });
+  });
+
   it("loads per-session usage from a selected relocated SQLite database", async () => {
     const root = await makeRoot("session-relocated");
     await withStateDir(root, async () => {
