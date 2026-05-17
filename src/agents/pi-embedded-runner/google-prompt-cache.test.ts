@@ -3,7 +3,6 @@ import type { StreamFn } from "openclaw/plugin-sdk/agent-core";
 import { describe, expect, it, vi } from "vitest";
 import type { Model } from "../pi-ai-contract.js";
 import { prepareGooglePromptCacheStreamFn } from "./google-prompt-cache.js";
-import { EmbeddedAttemptSessionTakeoverError } from "./run/attempt.session-lock.js";
 
 type SessionCustomEntry = {
   type: "custom";
@@ -12,11 +11,6 @@ type SessionCustomEntry = {
   timestamp: string;
   customType: string;
   data: unknown;
-};
-
-type TestGooglePromptCacheSessionManager = {
-  appendCustomEntry(customType: string, data: unknown): void | Promise<void>;
-  getEntries(): SessionCustomEntry[];
 };
 
 function makeSessionManager(entries: SessionCustomEntry[] = []) {
@@ -33,6 +27,7 @@ function makeSessionManager(entries: SessionCustomEntry[] = []) {
         customType,
         data,
       });
+      return id;
     },
     getEntries() {
       return entries;
@@ -122,7 +117,7 @@ function streamOptions(streamFn: { mock: { calls: unknown[][] } }, callIndex = 0
 function preparePromptCacheStream(params: {
   fetchMock: ReturnType<typeof vi.fn>;
   now: number;
-  sessionManager: TestGooglePromptCacheSessionManager;
+  sessionManager: ReturnType<typeof makeSessionManager>;
   streamFn: StreamFn;
 }) {
   return prepareGooglePromptCacheStreamFn(
@@ -164,23 +159,20 @@ describe("google prompt cache", () => {
     });
 
     expect(wrapped).toBeTypeOf("function");
-    expect(fetchMock).not.toHaveBeenCalled();
-    await Promise.resolve(
-      wrapped?.(
-        makeGoogleModel(),
-        {
-          systemPrompt: "Follow policy.",
-          messages: [],
-          tools: [
-            {
-              name: "lookup",
-              description: "Look up a value",
-              parameters: { type: "object" },
-            },
-          ],
-        } as never,
-        { temperature: 0.2 } as never,
-      ),
+    void wrapped?.(
+      makeGoogleModel(),
+      {
+        systemPrompt: "Follow policy.",
+        messages: [],
+        tools: [
+          {
+            name: "lookup",
+            description: "Look up a value",
+            parameters: { type: "object" },
+          },
+        ],
+      } as never,
+      { temperature: 0.2 } as never,
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -238,19 +230,12 @@ describe("google prompt cache", () => {
       expireTime: new Date(now + 3_600_000).toISOString(),
     });
 
-    const firstWrapped = await preparePromptCacheStream({
+    await preparePromptCacheStream({
       fetchMock,
       now,
       sessionManager,
       streamFn: vi.fn(() => "first" as never),
     });
-    await Promise.resolve(
-      firstWrapped?.(
-        makeGoogleModel(),
-        { systemPrompt: "Follow policy.", messages: [] } as never,
-        {} as never,
-      ),
-    );
 
     fetchMock.mockClear();
     const { streamFn: innerStreamFn, getCapturedPayload } = createCapturingStreamFn("second");
@@ -261,12 +246,10 @@ describe("google prompt cache", () => {
       streamFn: innerStreamFn,
     });
 
-    await Promise.resolve(
-      wrapped?.(
-        makeGoogleModel(),
-        { systemPrompt: "Follow policy.", messages: [] } as never,
-        {} as never,
-      ),
+    void wrapped?.(
+      makeGoogleModel(),
+      { systemPrompt: "Follow policy.", messages: [] } as never,
+      {} as never,
     );
 
     expect(fetchMock).not.toHaveBeenCalled();
@@ -274,40 +257,6 @@ describe("google prompt cache", () => {
     expect(streamContext(innerStreamFn).systemPrompt).toBeUndefined();
     expect(typeof streamOptions(innerStreamFn)).toBe("object");
     expect(getCapturedPayload()?.cachedContent).toBe("cachedContents/system-cache-2");
-  });
-
-  it("propagates session takeover errors from cache entry persistence", async () => {
-    const now = 2_500_000;
-    const takeoverError = new EmbeddedAttemptSessionTakeoverError("/tmp/session.jsonl");
-    const sessionManager = {
-      appendCustomEntry: vi.fn(async () => {
-        throw takeoverError;
-      }),
-      getEntries: vi.fn(() => []),
-    };
-    const fetchMock = createCacheFetchMock({
-      name: "cachedContents/system-cache-takeover",
-      expireTime: new Date(now + 3_600_000).toISOString(),
-    });
-    const innerStreamFn = vi.fn(() => "stream" as never);
-
-    const wrapped = await preparePromptCacheStream({
-      fetchMock,
-      now,
-      sessionManager,
-      streamFn: innerStreamFn,
-    });
-
-    await expect(
-      Promise.resolve(
-        wrapped?.(
-          makeGoogleModel(),
-          { systemPrompt: "Follow policy.", messages: [] } as never,
-          {} as never,
-        ),
-      ),
-    ).rejects.toBe(takeoverError);
-    expect(innerStreamFn).not.toHaveBeenCalled();
   });
 
   it("refreshes an about-to-expire cache entry instead of creating a new one", async () => {
@@ -348,12 +297,10 @@ describe("google prompt cache", () => {
       streamFn: innerStreamFn,
     });
 
-    await Promise.resolve(
-      wrapped?.(
-        makeGoogleModel(),
-        { systemPrompt: "Follow policy.", messages: [] } as never,
-        {} as never,
-      ),
+    void wrapped?.(
+      makeGoogleModel(),
+      { systemPrompt: "Follow policy.", messages: [] } as never,
+      {} as never,
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);

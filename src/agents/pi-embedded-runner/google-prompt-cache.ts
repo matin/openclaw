@@ -5,13 +5,11 @@ import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import type { StreamFn } from "../agent-core-contract.js";
 import type { Api, Model } from "../pi-ai-contract.js";
 import { buildGuardedModelFetch } from "../provider-transport-fetch.js";
-import { isSessionWriteLockTimeoutError } from "../session-write-lock-error.js";
 import { stableStringify } from "../stable-stringify.js";
 import { stripSystemPromptCacheBoundary } from "../system-prompt-cache-boundary.js";
 import { mergeTransportHeaders, sanitizeTransportPayloadText } from "../transport-stream-shared.js";
 import { log } from "./logger.js";
 import { isGooglePromptCacheEligible, resolveCacheRetention } from "./prompt-cache-retention.js";
-import { EmbeddedAttemptSessionTakeoverError } from "./run/attempt.session-lock.js";
 import { streamWithPayloadPatch } from "./stream-payload-utils.js";
 
 const GOOGLE_PROMPT_CACHE_CUSTOM_TYPE = "openclaw.google-prompt-cache";
@@ -23,7 +21,7 @@ type CacheRetention = "short" | "long";
 type CustomEntryLike = { type?: unknown; customType?: unknown; data?: unknown };
 
 type GooglePromptCacheSessionManager = {
-  appendCustomEntry(customType: string, data?: unknown): void | Promise<void>;
+  appendCustomEntry(customType: string, data?: unknown): unknown;
   getEntries(): CustomEntryLike[];
 };
 type GooglePromptCacheModel = Model<Api> & {
@@ -161,16 +159,13 @@ function readLatestGooglePromptCacheEntry(
   return null;
 }
 
-async function appendGooglePromptCacheEntry(
+function appendGooglePromptCacheEntry(
   sessionManager: GooglePromptCacheSessionManager,
   entry: GooglePromptCacheEntry,
-): Promise<void> {
+): void {
   try {
-    await sessionManager.appendCustomEntry(GOOGLE_PROMPT_CACHE_CUSTOM_TYPE, entry);
-  } catch (err) {
-    if (err instanceof EmbeddedAttemptSessionTakeoverError || isSessionWriteLockTimeoutError(err)) {
-      throw err;
-    }
+    sessionManager.appendCustomEntry(GOOGLE_PROMPT_CACHE_CUSTOM_TYPE, entry);
+  } catch {
     // ignore persistence failures
   }
 }
@@ -298,7 +293,7 @@ async function ensureGooglePromptCache(
         signal: params.signal,
       }).catch(() => null);
       if (refreshed) {
-        await appendGooglePromptCacheEntry(params.sessionManager, {
+        appendGooglePromptCacheEntry(params.sessionManager, {
           status: "ready",
           timestamp: now,
           provider: params.provider,
@@ -327,7 +322,7 @@ async function ensureGooglePromptCache(
     systemPrompt: params.systemPrompt,
   });
   if (!created) {
-    await appendGooglePromptCacheEntry(params.sessionManager, {
+    appendGooglePromptCacheEntry(params.sessionManager, {
       status: "failed",
       timestamp: now,
       provider: params.provider,
@@ -341,7 +336,7 @@ async function ensureGooglePromptCache(
     return null;
   }
 
-  await appendGooglePromptCacheEntry(params.sessionManager, {
+  appendGooglePromptCacheEntry(params.sessionManager, {
     status: "ready",
     timestamp: now,
     provider: params.provider,
@@ -384,28 +379,28 @@ export async function prepareGooglePromptCacheStreamFn(
     return undefined;
   }
 
-  const inner = params.streamFn;
-  return async (model, context, options) => {
-    const cachedContent = await ensureGooglePromptCache(
-      {
-        apiKey,
-        cacheRetention: resolvedRetention,
-        model: params.model,
-        provider: params.provider,
-        sessionManager: params.sessionManager,
-        signal: params.signal,
-        systemPrompt,
-      },
-      deps,
+  const cachedContent = await ensureGooglePromptCache(
+    {
+      apiKey,
+      cacheRetention: resolvedRetention,
+      model: params.model,
+      provider: params.provider,
+      sessionManager: params.sessionManager,
+      signal: params.signal,
+      systemPrompt,
+    },
+    deps,
+  );
+  if (!cachedContent) {
+    log.debug(
+      `google prompt cache unavailable for ${params.provider}/${params.modelId}; continuing without cachedContent`,
     );
-    if (!cachedContent) {
-      log.debug(
-        `google prompt cache unavailable for ${params.provider}/${params.modelId}; continuing without cachedContent`,
-      );
-      return inner(model, context, options);
-    }
+    return undefined;
+  }
 
-    return streamWithPayloadPatch(
+  const inner = params.streamFn;
+  return (model, context, options) =>
+    streamWithPayloadPatch(
       inner,
       model,
       buildManagedContextWithoutSystemPrompt(context),
@@ -414,5 +409,4 @@ export async function prepareGooglePromptCacheStreamFn(
         payload.cachedContent = cachedContent;
       },
     );
-  };
 }

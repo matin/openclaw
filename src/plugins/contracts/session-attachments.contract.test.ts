@@ -1,11 +1,15 @@
-import * as fs from "node:fs/promises";
+import fs from "node:fs/promises";
 import path from "node:path";
 import {
   createPluginRegistryFixture,
   registerTestPlugin,
 } from "openclaw/plugin-sdk/plugin-test-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { updateSessionStore, type SessionEntry } from "../../config/sessions.js";
+import {
+  resolveAgentIdFromSessionKey,
+  upsertSessionEntry,
+  type SessionEntry,
+} from "../../config/sessions.js";
 import { withTempConfig } from "../../gateway/test-temp-config.js";
 import { resolvePreferredOpenClawTmpDir } from "../../infra/tmp-openclaw-dir.js";
 import { FILE_TYPE_SNIFF_MAX_BYTES } from "../../media/mime.js";
@@ -60,20 +64,19 @@ function createSilentPluginLogger() {
 }
 
 async function withSessionStore(
-  run: (params: { stateDir: string; storePath: string; filePath: string }) => Promise<void>,
+  run: (params: { stateDir: string; filePath: string }) => Promise<void>,
 ) {
   const stateDir = await fs.mkdtemp(
     path.join(resolvePreferredOpenClawTmpDir(), "openclaw-session-attachments-"),
   );
-  const storePath = path.join(stateDir, "sessions.json");
   const filePath = path.join(stateDir, "x.txt");
   await fs.writeFile(filePath, "x", "utf8");
   const previousStateDir = process.env.OPENCLAW_STATE_DIR;
   process.env.OPENCLAW_STATE_DIR = stateDir;
   try {
     await withTempConfig({
-      cfg: { session: { store: storePath } },
-      run: async () => await run({ stateDir, storePath, filePath }),
+      cfg: {},
+      run: async () => await run({ stateDir, filePath }),
     });
   } finally {
     if (previousStateDir === undefined) {
@@ -86,17 +89,17 @@ async function withSessionStore(
 }
 
 async function writeSessionEntry(
-  storePath: string,
   entry: TestSessionEntry = { deliveryContext: DEFAULT_TELEGRAM_ROUTE },
   key = MAIN_SESSION_KEY,
 ) {
-  await updateSessionStore(storePath, (store) => {
-    store[key] = {
+  upsertSessionEntry({
+    agentId: resolveAgentIdFromSessionKey(key),
+    sessionKey: key,
+    entry: {
       sessionId: "session-id",
       updatedAt: Date.now(),
       ...entry,
-    } as unknown as SessionEntry;
-    return undefined;
+    } as unknown as SessionEntry,
   });
 }
 
@@ -214,8 +217,8 @@ describe("plugin session attachments", () => {
   });
 
   it("sends validated files through the session delivery route with channel hints", async () => {
-    await withSessionStore(async ({ storePath, filePath }) => {
-      await writeSessionEntry(storePath, {
+    await withSessionStore(async ({ filePath }) => {
+      await writeSessionEntry({
         deliveryContext: {
           ...DEFAULT_TELEGRAM_ROUTE,
           accountId: "default",
@@ -240,7 +243,7 @@ describe("plugin session attachments", () => {
       expect(sendParams.to).toBe("12345");
       expect(sendParams.channel).toBe("telegram");
       expect(sendParams.accountId).toBe("default");
-      expect(sendParams.threadId).toBe(42);
+      expect(sendParams.threadId).toBe("42");
       expect(sendParams.mediaUrls).toEqual([filePath]);
       expect(sendParams.bestEffort).toBe(false);
       expect(sendParams.silent).toBe(true);
@@ -249,12 +252,12 @@ describe("plugin session attachments", () => {
   });
 
   it("does not use best-effort mode for attachment batches", async () => {
-    await withSessionStore(async ({ storePath, stateDir }) => {
+    await withSessionStore(async ({ stateDir }) => {
       const first = path.join(stateDir, "first.txt");
       const second = path.join(stateDir, "second.txt");
       await fs.writeFile(first, "1", "utf8");
       await fs.writeFile(second, "2", "utf8");
-      await writeSessionEntry(storePath);
+      await writeSessionEntry();
       mockSuccessfulAttachmentDelivery();
 
       const result = await sendBundledSessionAttachment({
@@ -268,8 +271,8 @@ describe("plugin session attachments", () => {
   });
 
   it("escapes plain Telegram attachment captions before HTML delivery", async () => {
-    await withSessionStore(async ({ storePath, filePath }) => {
-      await writeSessionEntry(storePath);
+    await withSessionStore(async ({ filePath }) => {
+      await writeSessionEntry();
       mockSuccessfulAttachmentDelivery();
 
       const result = await sendBundledSessionAttachment({
@@ -286,19 +289,18 @@ describe("plugin session attachments", () => {
   });
 
   it("resolves relative attachment paths against the session agent workspace", async () => {
-    await withSessionStore(async ({ storePath, stateDir }) => {
+    await withSessionStore(async ({ stateDir }) => {
       const workspaceDir = path.join(stateDir, "workspace");
       const relativeFilePath = "./report.txt";
       const absoluteFilePath = path.join(workspaceDir, "report.txt");
       await fs.mkdir(workspaceDir, { recursive: true });
       await fs.writeFile(absoluteFilePath, "workspace report", "utf8");
-      await writeSessionEntry(storePath);
+      await writeSessionEntry();
       mockSuccessfulAttachmentDelivery();
 
       const result = await sendBundledSessionAttachment({
         files: [{ path: relativeFilePath }],
         config: {
-          session: { store: storePath },
           agents: {
             list: [{ id: "main", workspace: workspaceDir }],
           },
@@ -309,7 +311,32 @@ describe("plugin session attachments", () => {
     });
   });
 
-  it("prefers the thread encoded in a threaded session key over stale stored routes", () => {
+  it("prefers the typed stored route over thread-shaped session keys", async () => {
+    await withSessionStore(async ({ filePath }) => {
+      const baseKey = "agent:main:telegram:group:12345";
+      const threadKey = `${baseKey}:thread:99`;
+      await writeSessionEntry(
+        {
+          deliveryContext: {
+            channel: "telegram",
+            to: "group:12345",
+            threadId: 42,
+          },
+        },
+        threadKey,
+      );
+      mockSuccessfulAttachmentDelivery();
+
+      const result = await sendBundledSessionAttachment({
+        sessionKey: threadKey,
+        files: [{ path: filePath }],
+      });
+      expectTelegramAttachmentResult(result, 1);
+      expect(requireFirstSendMessageParams().threadId).toBe("42");
+    });
+  });
+
+  it("applies explicit attachment thread hint precedence", () => {
     expect(
       resolveSessionAttachmentThreadId({
         deliveryThreadId: 42,
@@ -334,8 +361,8 @@ describe("plugin session attachments", () => {
   });
 
   it("reports attachment delivery as failed when no delivery result is returned", async () => {
-    await withSessionStore(async ({ storePath, filePath }) => {
-      await writeSessionEntry(storePath);
+    await withSessionStore(async ({ filePath }) => {
+      await writeSessionEntry();
       workflowMocks.sendMessage.mockResolvedValue({
         channel: "telegram",
         to: "12345",
@@ -355,8 +382,8 @@ describe("plugin session attachments", () => {
   });
 
   it("rejects external plugins and sessions without delivery routes", async () => {
-    await withSessionStore(async ({ storePath, filePath }) => {
-      await writeSessionEntry(storePath, {});
+    await withSessionStore(async ({ filePath }) => {
+      await writeSessionEntry({});
 
       await expect(
         sendPluginSessionAttachment({
@@ -381,8 +408,8 @@ describe("plugin session attachments", () => {
   });
 
   it("rejects malformed or oversized attachment inputs before delivery", async () => {
-    await withSessionStore(async ({ storePath, stateDir, filePath }) => {
-      await writeSessionEntry(storePath);
+    await withSessionStore(async ({ stateDir, filePath }) => {
+      await writeSessionEntry();
 
       await expect(
         sendBundledSessionAttachment({
@@ -482,13 +509,13 @@ describe("plugin session attachments", () => {
   });
 
   it("validates force-document MIME using only the configured sniff window", async () => {
-    await withSessionStore(async ({ storePath, stateDir }) => {
+    await withSessionStore(async ({ stateDir }) => {
       const pdfPath = path.join(stateDir, "large.pdf");
       await fs.writeFile(
         pdfPath,
         Buffer.concat([Buffer.from("%PDF-1.7\n"), Buffer.alloc(FILE_TYPE_SNIFF_MAX_BYTES + 32)]),
       );
-      await writeSessionEntry(storePath);
+      await writeSessionEntry();
       mockSuccessfulAttachmentDelivery();
 
       const result = await sendBundledSessionAttachment({
@@ -504,8 +531,8 @@ describe("plugin session attachments", () => {
   });
 
   it("rejects gateway-mode channels before attempting host-local attachment delivery", async () => {
-    await withSessionStore(async ({ storePath, filePath }) => {
-      await writeSessionEntry(storePath);
+    await withSessionStore(async ({ filePath }) => {
+      await writeSessionEntry();
       workflowMocks.getChannelPlugin.mockReturnValue(
         createOutboundTestPlugin({
           id: "telegram",
@@ -540,8 +567,8 @@ describe("plugin session attachments", () => {
   });
 
   it("rejects unloaded bundled gateway-mode channels before attachment delivery", async () => {
-    await withSessionStore(async ({ storePath, filePath }) => {
-      await writeSessionEntry(storePath, {
+    await withSessionStore(async ({ filePath }) => {
+      await writeSessionEntry({
         deliveryContext: {
           channel: "whatsapp",
           to: "+15551234567",
@@ -570,8 +597,8 @@ describe("plugin session attachments", () => {
   });
 
   it("returns structured errors when channel delivery lookup fails", async () => {
-    await withSessionStore(async ({ storePath, filePath }) => {
-      await writeSessionEntry(storePath);
+    await withSessionStore(async ({ filePath }) => {
+      await writeSessionEntry();
       workflowMocks.getChannelPlugin.mockImplementation(() => {
         throw new Error("channel registry unavailable");
       });
@@ -589,11 +616,11 @@ describe("plugin session attachments", () => {
   });
 
   it("wires sendSessionAttachment through the plugin API with stale-registry protection", async () => {
-    await withSessionStore(async ({ storePath, filePath }) => {
-      await writeSessionEntry(storePath);
+    await withSessionStore(async ({ filePath }) => {
+      await writeSessionEntry();
       mockSuccessfulAttachmentDelivery();
 
-      const { config, registry } = createPluginRegistryFixture({ session: { store: storePath } });
+      const { config, registry } = createPluginRegistryFixture();
       let capturedApi: OpenClawPluginApi | undefined;
       registerTestPlugin({
         registry,
@@ -626,13 +653,12 @@ describe("plugin session attachments", () => {
   });
 
   it("uses the live runtime config when a captured API sends an attachment", async () => {
-    await withSessionStore(async ({ stateDir, storePath, filePath }) => {
-      await writeSessionEntry(storePath);
+    await withSessionStore(async ({ filePath }) => {
+      await writeSessionEntry();
       mockSuccessfulAttachmentDelivery();
 
-      const staleStorePath = path.join(stateDir, "stale-sessions.json");
-      const registrationConfig = { session: { store: staleStorePath } };
-      const liveConfig = { session: { store: storePath } };
+      const registrationConfig = { agents: { list: [] } };
+      const liveConfig = { agents: { list: [{ id: "main" }] } };
       const registry = createPluginRegistry({
         logger: createSilentPluginLogger(),
         runtime: {
@@ -667,10 +693,10 @@ describe("plugin session attachments", () => {
   });
 
   it("returns structured errors when the captured API cannot read the live runtime config", async () => {
-    await withSessionStore(async ({ stateDir, storePath, filePath }) => {
-      await writeSessionEntry(storePath);
+    await withSessionStore(async ({ filePath }) => {
+      await writeSessionEntry();
 
-      const registrationConfig = { session: { store: path.join(stateDir, "stale-sessions.json") } };
+      const registrationConfig = { agents: { list: [] } };
       const registry = createPluginRegistry({
         logger: createSilentPluginLogger(),
         runtime: {
