@@ -384,6 +384,63 @@ describe("pairing store", () => {
     });
   });
 
+  it("merges legacy pairing requests with newer SQLite entries", async () => {
+    await withTempStateDir(async (stateDir) => {
+      const now = new Date().toISOString();
+      writeChannelPairingTestState(stateDir, "telegram", {
+        version: 1,
+        requests: [
+          {
+            id: "sqlite-new",
+            code: "SQLITE01",
+            createdAt: now,
+            lastSeenAt: now,
+          },
+        ],
+      });
+      const pairingPath = path.join(
+        path.dirname(resolveLegacyChannelAllowFromPath("telegram", process.env)),
+        "telegram-pairing.json",
+      );
+      fsSync.mkdirSync(path.dirname(pairingPath), { recursive: true });
+      fsSync.writeFileSync(
+        pairingPath,
+        `${JSON.stringify({
+          version: 1,
+          requests: [
+            {
+              id: "legacy-old",
+              code: "LEGACY01",
+              createdAt: now,
+              lastSeenAt: now,
+            },
+            {
+              id: "sqlite-new",
+              code: "STALE001",
+              createdAt: now,
+              lastSeenAt: now,
+            },
+          ],
+        })}\n`,
+        "utf8",
+      );
+
+      await expect(importLegacyChannelPairingFilesToSqlite(process.env)).resolves.toMatchObject({
+        requests: 1,
+      });
+
+      const state = readChannelPairingTestState(stateDir, "telegram");
+      expect(state.requests).toHaveLength(2);
+      expect(state.requests.find((request) => request.id === "sqlite-new")).toMatchObject({
+        code: "SQLITE01",
+      });
+      expect(state.requests.find((request) => request.id === "legacy-old")).toMatchObject({
+        code: "LEGACY01",
+      });
+      expect(fsSync.existsSync(pairingPath)).toBe(false);
+    });
+  });
+
   it("handles pending pairing request lifecycle and limits", async () => {
     await withTempStateDir(async (stateDir) => {
       const first = await upsertChannelPairingRequest({

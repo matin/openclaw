@@ -111,6 +111,27 @@ function normalizeChannelPairingState(
   return { version: 1, requests, allowFrom };
 }
 
+function mergePairingRequests(
+  current: readonly PairingRequest[],
+  legacy: readonly PairingRequest[],
+): { requests: PairingRequest[]; added: number } {
+  const merged = new Map<string, PairingRequest>();
+  for (const request of current) {
+    merged.set(request.id, request);
+  }
+
+  let added = 0;
+  for (const request of legacy) {
+    if (merged.has(request.id)) {
+      continue;
+    }
+    merged.set(request.id, request);
+    added += 1;
+  }
+
+  return { requests: [...merged.values()], added };
+}
+
 function readChannelPairingState(
   channel: PairingChannel,
   env: NodeJS.ProcessEnv,
@@ -242,9 +263,10 @@ export async function importLegacyChannelPairingFilesToSqlite(
       const legacy = await readLegacyPairingStore(filePath);
       if (legacy) {
         const state = readChannelPairingState(pairingChannel, env);
-        state.requests = legacy.requests;
+        const merged = mergePairingRequests(state.requests ?? [], legacy.requests);
+        state.requests = merged.requests;
         writeChannelPairingState(pairingChannel, state, env);
-        requests += legacy.requests.length;
+        requests += merged.added;
       }
       await fs.rm(filePath, { force: true }).catch(() => undefined);
       files += 1;
