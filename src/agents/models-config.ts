@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   getRuntimeConfig,
   getRuntimeConfigSourceSnapshot,
@@ -7,10 +8,8 @@ import {
 import { createConfigRuntimeEnv } from "../config/env-vars.js";
 import { getCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
 import { resolveInstalledManifestRegistryIndexFingerprint } from "../plugins/manifest-registry-installed.js";
-import {
-  loadPluginMetadataSnapshot,
-  type PluginMetadataSnapshot,
-} from "../plugins/plugin-metadata-snapshot.js";
+import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
+import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
 import {
   resolveAgentWorkspaceDir,
   resolveDefaultAgentDir,
@@ -45,6 +44,7 @@ async function buildModelCatalogFingerprint(params: {
   config: OpenClawConfig;
   sourceConfigForSecrets: OpenClawConfig;
   agentDir: string;
+  stateOptions?: OpenClawStateDatabaseOptions;
   workspaceDir?: string;
   pluginMetadataSnapshot?: Pick<PluginMetadataSnapshot, "index">;
   providerDiscoveryProviderIds?: readonly string[];
@@ -52,8 +52,8 @@ async function buildModelCatalogFingerprint(params: {
   providerDiscoveryEntriesOnly?: boolean;
 }): Promise<string> {
   const authProfilesUpdatedAt =
-    loadPersistedAuthProfileStoreEntry(params.agentDir)?.updatedAt ?? null;
-  const storedModelsConfig = readStoredModelsConfigRaw(params.agentDir);
+    loadPersistedAuthProfileStoreEntry(params.agentDir, params.stateOptions)?.updatedAt ?? null;
+  const storedModelsConfig = readStoredModelsConfigRaw(params.agentDir, params.stateOptions);
   const envShape = createConfigRuntimeEnv(params.config, {});
   const pluginMetadataSnapshotIndexFingerprint = params.pluginMetadataSnapshot
     ? resolveInstalledManifestRegistryIndexFingerprint(params.pluginMetadataSnapshot.index)
@@ -76,12 +76,30 @@ function modelCatalogReadyCacheKey(targetPath: string, fingerprint: string): str
   return `${targetPath}\0${fingerprint}`;
 }
 
+function resolveModelCatalogStateOptions(agentDir: string): OpenClawStateDatabaseOptions {
+  const resolved = path.resolve(agentDir);
+  if (path.basename(resolved) !== "agent") {
+    return {};
+  }
+  const agentIdDir = path.dirname(resolved);
+  const agentsDir = path.dirname(agentIdDir);
+  if (path.basename(agentsDir) !== "agents") {
+    return {};
+  }
+  return {
+    env: {
+      ...process.env,
+      OPENCLAW_STATE_DIR: path.dirname(agentsDir),
+    },
+  };
+}
+
 async function readExistingModelsConfig(agentDir: string): Promise<{
   raw: string;
   parsed: unknown;
 }> {
   try {
-    const stored = readStoredModelsConfigRaw(agentDir);
+    const stored = readStoredModelsConfigRaw(agentDir, resolveModelCatalogStateOptions(agentDir));
     if (!stored) {
       return {
         raw: "",
@@ -176,11 +194,13 @@ export async function ensureOpenClawModelCatalog(
       ...(workspaceDir ? { workspaceDir } : {}),
     });
   const agentDir = agentDirOverride?.trim() ? agentDirOverride.trim() : resolveDefaultAgentDir(cfg);
-  const targetKey = agentDir;
+  const stateOptions = resolveModelCatalogStateOptions(agentDir);
+  const targetKey = `${stateOptions.env?.OPENCLAW_STATE_DIR ?? ""}\0${path.resolve(agentDir)}`;
   const fingerprint = await buildModelCatalogFingerprint({
     config: cfg,
     sourceConfigForSecrets: resolved.sourceConfigForSecrets,
     agentDir,
+    stateOptions,
     ...(workspaceDir ? { workspaceDir } : {}),
     ...(pluginMetadataSnapshot ? { pluginMetadataSnapshot } : {}),
     ...(options.providerDiscoveryProviderIds
@@ -233,7 +253,7 @@ export async function ensureOpenClawModelCatalog(
       return { fingerprint, result: { agentDir, wrote: false } };
     }
 
-    writeStoredModelsConfigRaw(agentDir, plan.contents);
+    writeStoredModelsConfigRaw(agentDir, plan.contents, stateOptions);
     return { fingerprint, result: { agentDir, wrote: true } };
   });
   MODEL_CATALOG_STATE.readyCache.set(cacheKey, pending);
@@ -243,6 +263,7 @@ export async function ensureOpenClawModelCatalog(
       config: cfg,
       sourceConfigForSecrets: resolved.sourceConfigForSecrets,
       agentDir,
+      stateOptions,
       ...(workspaceDir ? { workspaceDir } : {}),
       ...(pluginMetadataSnapshot ? { pluginMetadataSnapshot } : {}),
       ...(options.providerDiscoveryProviderIds

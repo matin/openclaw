@@ -161,6 +161,39 @@ describe("models-config write serialization", () => {
     });
   });
 
+  it("stores explicit canonical agent dirs in their owning state database", async () => {
+    await withModelsTempHome(async (home) => {
+      const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+      const defaultStateDir = path.join(home, "default-state");
+      const alternateStateDir = path.join(home, "alternate-state");
+      const agentDir = path.join(alternateStateDir, "agents", "ops", "agent");
+      try {
+        process.env.OPENCLAW_STATE_DIR = defaultStateDir;
+
+        await ensureOpenClawModelCatalog({}, agentDir, {
+          workspaceDir: path.join(home, "workspace"),
+        });
+
+        expect(
+          readStoredModelsConfigRaw(agentDir, {
+            env: { ...process.env, OPENCLAW_STATE_DIR: alternateStateDir },
+          })?.raw,
+        ).toContain('"providers"');
+        expect(
+          readStoredModelsConfigRaw(agentDir, {
+            env: { ...process.env, OPENCLAW_STATE_DIR: defaultStateDir },
+          }),
+        ).toBeUndefined();
+      } finally {
+        if (previousStateDir === undefined) {
+          delete process.env.OPENCLAW_STATE_DIR;
+        } else {
+          process.env.OPENCLAW_STATE_DIR = previousStateDir;
+        }
+      }
+    });
+  });
+
   it("does not reuse scoped startup discovery cache for a different provider scope", async () => {
     await withModelsTempHome(async (home) => {
       planOpenClawModelCatalogMock.mockImplementation(async () => ({ action: "skip" }));
