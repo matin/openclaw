@@ -144,8 +144,19 @@ describe("maybeRepairLegacyRuntimeStateFiles", () => {
               operator: {
                 token: "local-token",
                 role: "operator",
+                scopes: ["operator.write", "operator.read", 42],
+                updatedAtMs: Number.NaN,
+              },
+              stale: {
+                role: "operator",
+                scopes: ["operator.admin"],
+                updatedAtMs: 2,
+              },
+              "  ": {
+                token: "blank-role-token",
+                role: "operator",
                 scopes: ["operator.read"],
-                updatedAtMs: 1,
+                updatedAtMs: 3,
               },
             },
           })}\n`,
@@ -520,7 +531,14 @@ describe("maybeRepairLegacyRuntimeStateFiles", () => {
         await expect(fs.stat(path.join(stateDir, "node.json"))).rejects.toMatchObject({
           code: "ENOENT",
         });
-        expect(loadDeviceAuthStore({ env })?.tokens.operator?.token).toBe("local-token");
+        expect(loadDeviceAuthStore({ env })?.tokens).toEqual({
+          operator: {
+            token: "local-token",
+            role: "operator",
+            scopes: ["operator.read", "operator.write"],
+            updatedAtMs: 0,
+          },
+        });
         await expect(listChannelPairingRequests("telegram", env, "default")).resolves.toEqual([
           expect.objectContaining({ id: "sender-1", code: "ABCD1234" }),
         ]);

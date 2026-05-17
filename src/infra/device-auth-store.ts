@@ -23,7 +23,7 @@ const DeviceAuthStoreSchema = z.object({
   version: z.literal(1),
   deviceId: z.string(),
   tokens: z.record(z.string(), z.unknown()),
-}) as z.ZodType<DeviceAuthStore>;
+});
 
 type DeviceAuthDatabase = Pick<OpenClawStateKyselyDatabase, "device_auth_tokens">;
 type DeviceAuthTokenRow = Selectable<DeviceAuthDatabase["device_auth_tokens"]>;
@@ -40,6 +40,42 @@ function parseScopesJson(value: string): string[] {
   } catch {
     return [];
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function coerceDeviceAuthEntry(role: string, value: unknown): DeviceAuthEntry | null {
+  if (!isRecord(value) || typeof value.token !== "string") {
+    return null;
+  }
+  return {
+    token: value.token,
+    role,
+    scopes: normalizeDeviceAuthScopes(Array.isArray(value.scopes) ? value.scopes : undefined),
+    updatedAtMs:
+      typeof value.updatedAtMs === "number" && Number.isFinite(value.updatedAtMs)
+        ? value.updatedAtMs
+        : 0,
+  };
+}
+
+function copyCanonicalDeviceAuthTokens(
+  tokens: Record<string, unknown>,
+): Record<string, DeviceAuthEntry> {
+  const out: Record<string, DeviceAuthEntry> = {};
+  for (const [rawRole, value] of Object.entries(tokens)) {
+    const role = normalizeDeviceAuthRole(rawRole);
+    if (!role) {
+      continue;
+    }
+    const entry = coerceDeviceAuthEntry(role, value);
+    if (entry) {
+      out[role] = entry;
+    }
+  }
+  return out;
 }
 
 function rowToDeviceAuthEntry(row: DeviceAuthTokenRow): DeviceAuthEntry {
@@ -162,7 +198,14 @@ export function storeDeviceAuthStore(params: {
 
 export function parseDeviceAuthStoreSnapshot(raw: unknown): DeviceAuthStore | null {
   const store = DeviceAuthStoreSchema.safeParse(raw);
-  return store.success ? store.data : null;
+  if (!store.success) {
+    return null;
+  }
+  return {
+    version: 1,
+    deviceId: store.data.deviceId,
+    tokens: copyCanonicalDeviceAuthTokens(store.data.tokens),
+  };
 }
 
 export function writeDeviceAuthStoreSnapshot(
