@@ -48,6 +48,7 @@ export type PluginBlobSyncStore<TMetadata = Record<string, unknown>> = {
 const NAMESPACE_PATTERN = /^[a-z0-9][a-z0-9._-]*$/iu;
 const MAX_NAMESPACE_BYTES = 128;
 const MAX_KEY_BYTES = 512;
+const MAX_JSON_DEPTH = 64;
 const textEncoder = new TextEncoder();
 
 type PluginBlobEntriesTable = OpenClawStateKyselyDatabase["plugin_blob_entries"];
@@ -107,11 +108,79 @@ function validateOptionalTtlMs(value: number | undefined): number | undefined {
   return value;
 }
 
+function assertPlainJsonValue(
+  value: unknown,
+  seen: WeakSet<object>,
+  path: string,
+  depth = 0,
+): void {
+  if (depth > MAX_JSON_DEPTH) {
+    throw new Error(`plugin blob metadata nesting exceeds maximum depth of ${MAX_JSON_DEPTH}`);
+  }
+  if (value === null) {
+    return;
+  }
+  const valueType = typeof value;
+  if (valueType === "string" || valueType === "boolean") {
+    return;
+  }
+  if (valueType === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error(`plugin blob metadata at ${path} must be a finite number`);
+    }
+    return;
+  }
+  if (valueType !== "object") {
+    throw new Error(`plugin blob metadata at ${path} must be JSON-serializable`);
+  }
+
+  const objectValue = value as object;
+  if (seen.has(objectValue)) {
+    throw new Error(`plugin blob metadata at ${path} must not contain circular references`);
+  }
+  seen.add(objectValue);
+  try {
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        if (!(index in value)) {
+          throw new Error(`plugin blob metadata array at ${path} must not be sparse`);
+        }
+        assertPlainJsonValue(value[index], seen, `${path}[${index}]`, depth + 1);
+      }
+      return;
+    }
+
+    if (Object.getPrototypeOf(objectValue) !== Object.prototype) {
+      throw new Error(`plugin blob metadata object at ${path} must be a plain object`);
+    }
+    const descriptorEntries = Object.entries(Object.getOwnPropertyDescriptors(objectValue));
+    const enumerableKeys = Object.keys(objectValue);
+    if (Object.getOwnPropertySymbols(objectValue).length > 0) {
+      throw new Error(`plugin blob metadata object at ${path} must not use symbol keys`);
+    }
+    if (descriptorEntries.length !== enumerableKeys.length) {
+      throw new Error(
+        `plugin blob metadata object at ${path} must not use non-enumerable properties`,
+      );
+    }
+    for (const [key, descriptor] of descriptorEntries) {
+      if (descriptor.get || descriptor.set || !("value" in descriptor)) {
+        throw new Error(`plugin blob metadata object at ${path}.${key} must use data properties`);
+      }
+      assertPlainJsonValue(descriptor.value, seen, `${path}.${key}`, depth + 1);
+    }
+  } finally {
+    seen.delete(objectValue);
+  }
+}
+
 function assertJsonMetadata(value: unknown): string {
-  if (value === undefined) {
+  assertPlainJsonValue(value, new WeakSet<object>(), "metadata");
+  const json = JSON.stringify(value);
+  if (json === undefined) {
     throw new Error("plugin blob metadata must be JSON-serializable");
   }
-  return JSON.stringify(value);
+  return json;
 }
 
 function normalizeNumber(value: number | bigint | null): number | undefined {

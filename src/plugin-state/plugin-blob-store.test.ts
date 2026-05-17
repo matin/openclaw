@@ -61,4 +61,21 @@ describe("plugin blob store", () => {
       await expect(otherNamespace.deleteExpired()).resolves.toBe(1);
     });
   });
+
+  it("rejects metadata that cannot round-trip as JSON", async () => {
+    await withOpenClawTestState({ label: "plugin-blob-store-json-metadata" }, async () => {
+      const store = createPluginBlobStore<unknown>("zalo", {
+        namespace: "media",
+        maxEntries: 10,
+      });
+
+      await expect(
+        store.register("undefined-field", { value: undefined }, Buffer.from("blob")),
+      ).rejects.toThrow("plugin blob metadata at metadata.value must be JSON-serializable");
+      await expect(
+        store.register("function-field", { callback() {} }, Buffer.from("blob")),
+      ).rejects.toThrow("plugin blob metadata at metadata.callback must be JSON-serializable");
+      await expect(store.entries()).resolves.toEqual([]);
+    });
+  });
 });
