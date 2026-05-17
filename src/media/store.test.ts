@@ -193,6 +193,7 @@ describe("media store", () => {
     setup: (store: typeof import("./store.js")) => Promise<{
       removedFiles: string[];
       preservedFiles: string[];
+      removedMediaRefs?: Array<{ id: string; subdir: string }>;
       preservedMediaRefs?: Array<{ id: string; subdir: string; expected: Buffer }>;
       removedDirs?: string[];
       preservedDirs?: string[];
@@ -208,6 +209,11 @@ describe("media store", () => {
       for (const preservedFile of state.preservedFiles) {
         const stat = await fs.stat(preservedFile);
         expect(stat.isFile()).toBe(true);
+      }
+      for (const removedRef of state.removedMediaRefs ?? []) {
+        await expect(store.readMediaBuffer(removedRef.id, removedRef.subdir)).rejects.toThrow(
+          "does not resolve to a file",
+        );
       }
       for (const preservedRef of state.preservedMediaRefs ?? []) {
         const result = await store.readMediaBuffer(preservedRef.id, preservedRef.subdir);
@@ -446,9 +452,9 @@ describe("media store", () => {
           await store.cleanOldMedia(-1);
 
           await expectPathMissing(saved.path);
-          const read = await store.readMediaBuffer(saved.id, "inbound");
-          expect(read.buffer.toString("utf8")).toBe("nested");
-          await expect(fs.readFile(read.path, "utf8")).resolves.toBe("nested");
+          await expect(store.readMediaBuffer(saved.id, "inbound")).rejects.toThrow(
+            "does not resolve to a file",
+          );
         });
       },
     },
@@ -587,6 +593,10 @@ describe("media store", () => {
         return {
           removedFiles: [oldNested.path, oldFlat.path],
           preservedFiles: [freshNested.path],
+          removedMediaRefs: [
+            { id: oldNested.id, subdir: path.join("remote-cache", "session-1", "images") },
+            { id: oldFlat.id, subdir: "inbound" },
+          ],
           preservedMediaRefs: [
             {
               id: freshNested.id,
@@ -611,6 +621,13 @@ describe("media store", () => {
         return {
           removedFiles: [],
           preservedFiles: [nested.path],
+          preservedMediaRefs: [
+            {
+              id: nested.id,
+              subdir: path.join("remote-cache", "session-1", "images"),
+              expected: Buffer.from("old nested"),
+            },
+          ],
         };
       },
       run: async (store: typeof import("./store.js")) =>

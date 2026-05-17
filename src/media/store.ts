@@ -264,6 +264,16 @@ function upsertMediaBlob(params: {
   }, params.state);
 }
 
+function deleteExpiredMediaBlobs(params: { cutoff: number; recursive: boolean }): void {
+  runOpenClawStateWriteTransaction((database) => {
+    const baseQuery = getMediaKysely(database.db)
+      .deleteFrom("media_blobs")
+      .where("updated_at", "<", params.cutoff);
+    const query = params.recursive ? baseQuery : baseQuery.where("subdir", "=", "");
+    executeSqliteQuerySync(database.db, query);
+  });
+}
+
 export function setMediaStoreNetworkDepsForTest(deps?: {
   httpRequest?: RequestImpl;
   httpsRequest?: RequestImpl;
@@ -413,6 +423,7 @@ export async function cleanOldMedia(ttlMs = DEFAULT_TTL_MS, options: CleanOldMed
   const cutoff = Date.now() - ttlMs;
   const materializationRoot = resolveMediaMaterializationRoot();
   const recursive = options.recursive ?? true;
+  deleteExpiredMediaBlobs({ cutoff, recursive });
   const removedDirs = new Set<string>();
   const expiredMaterializedFiles = await collectExpiredMaterializedMediaFiles({
     dir: materializationRoot,
