@@ -26,6 +26,7 @@ import {
   type LoadInstalledPluginIndexParams,
   type RefreshInstalledPluginIndexParams,
 } from "./installed-plugin-index-types.js";
+import { clearLoadPluginMetadataSnapshotMemo } from "./plugin-metadata-snapshot.js";
 export {
   readPersistedInstalledPluginIndex,
   readPersistedInstalledPluginIndexSync,
@@ -47,12 +48,17 @@ function withInstalledPluginIndexWarning(index: InstalledPluginIndex): Installed
   return { ...index, warning: INSTALLED_PLUGIN_INDEX_WARNING };
 }
 
+function clearInstalledPluginMetadataCaches(): void {
+  clearCurrentPluginMetadataSnapshotState();
+  clearLoadPluginMetadataSnapshotMemo();
+}
+
 export async function writePersistedInstalledPluginIndex(
   index: InstalledPluginIndex,
   options: InstalledPluginIndexStoreOptions = {},
 ): Promise<void> {
   writePersistedInstalledPluginIndexToSqliteSync(withInstalledPluginIndexWarning(index), options);
-  clearCurrentPluginMetadataSnapshotState();
+  clearInstalledPluginMetadataCaches();
 }
 
 export function writePersistedInstalledPluginIndexSync(
@@ -60,7 +66,7 @@ export function writePersistedInstalledPluginIndexSync(
   options: InstalledPluginIndexStoreOptions = {},
 ): void {
   writePersistedInstalledPluginIndexToSqliteSync(withInstalledPluginIndexWarning(index), options);
-  clearCurrentPluginMetadataSnapshotState();
+  clearInstalledPluginMetadataCaches();
 }
 
 export function deletePersistedInstalledPluginIndexSync(
@@ -68,7 +74,7 @@ export function deletePersistedInstalledPluginIndexSync(
 ): boolean {
   const removed = deletePersistedInstalledPluginIndexFromSqliteSync(options);
   if (removed) {
-    clearCurrentPluginMetadataSnapshotState();
+    clearInstalledPluginMetadataCaches();
   }
   return removed;
 }
