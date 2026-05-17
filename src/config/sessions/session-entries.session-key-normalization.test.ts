@@ -13,6 +13,7 @@ import type { SessionEntry } from "./types.js";
 
 const CANONICAL_KEY = "agent:main:webchat:dm:mixed-user";
 const MIXED_CASE_KEY = "Agent:Main:WebChat:DM:MiXeD-User";
+const SIGNAL_GROUP_KEY = "agent:main:signal:group:AbC123Opaque";
 type SessionEntriesTestDatabase = Pick<
   OpenClawAgentKyselyDatabase,
   "session_entries" | "session_routes" | "sessions"
@@ -190,6 +191,41 @@ describe("SQLite session row key normalization", () => {
     expect(store[CANONICAL_KEY]).toMatchObject({
       sessionId: "legacy-session",
       modelOverride: "gpt-5.5",
+    });
+  });
+
+  it("preserves case-sensitive Signal group IDs while patching rows", async () => {
+    upsertSessionEntry({
+      agentId: "main",
+      sessionKey: SIGNAL_GROUP_KEY,
+      entry: {
+        sessionId: "signal-group-session",
+        updatedAt: 100,
+        chatType: "group",
+        channel: "signal",
+        deliveryContext: {
+          channel: "signal",
+          to: "AbC123Opaque",
+          chatType: "group",
+        },
+      },
+    });
+
+    await patchSessionEntry({
+      agentId: "main",
+      sessionKey: "Agent:MAIN:Signal:Group:AbC123Opaque",
+      update: () => ({ updatedAt: 200, modelOverride: "gpt-5.5" }),
+    });
+
+    const store = readMainSessionRows();
+    expect(Object.keys(store)).toEqual([SIGNAL_GROUP_KEY]);
+    expect(store[SIGNAL_GROUP_KEY]).toMatchObject({
+      sessionId: "signal-group-session",
+      modelOverride: "gpt-5.5",
+      deliveryContext: {
+        channel: "signal",
+        to: "AbC123Opaque",
+      },
     });
   });
 
