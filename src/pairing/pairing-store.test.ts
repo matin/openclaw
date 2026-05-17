@@ -356,6 +356,34 @@ describe("pairing store", () => {
     });
   });
 
+  it("merges legacy allowFrom import with newer SQLite entries", async () => {
+    await withTempStateDir(async (stateDir) => {
+      await writeAllowFromFixture({
+        stateDir,
+        channel: "telegram",
+        accountId: "yy",
+        allowFrom: ["sqlite-new"],
+      });
+      const allowFromPath = resolveLegacyChannelAllowFromPath("telegram", process.env, "yy");
+      fsSync.mkdirSync(path.dirname(allowFromPath), { recursive: true });
+      fsSync.writeFileSync(
+        allowFromPath,
+        `${JSON.stringify({ version: 1, allowFrom: ["legacy-old", "sqlite-new"] })}\n`,
+        "utf8",
+      );
+
+      await expect(importLegacyChannelPairingFilesToSqlite(process.env)).resolves.toMatchObject({
+        allowFrom: 2,
+      });
+
+      await expect(readChannelAllowFromStore("telegram", process.env, "yy")).resolves.toEqual([
+        "sqlite-new",
+        "legacy-old",
+      ]);
+      expect(fsSync.existsSync(allowFromPath)).toBe(false);
+    });
+  });
+
   it("handles pending pairing request lifecycle and limits", async () => {
     await withTempStateDir(async (stateDir) => {
       const first = await upsertChannelPairingRequest({
@@ -633,6 +661,29 @@ describe("pairing store", () => {
       await expect(readChannelAllowFromStore("telegram", process.env)).resolves.toEqual([
         "legacy-default",
       ]);
+    });
+  });
+
+  it("can remove a legacy-only allowFrom fallback before doctor migration", async () => {
+    await withTempStateDir(async (stateDir) => {
+      clearOAuthFixtures(stateDir);
+      const scopedPath = resolveAllowFromFilePath(stateDir, "telegram", "yy");
+      fsSync.mkdirSync(path.dirname(scopedPath), { recursive: true });
+      fsSync.writeFileSync(
+        scopedPath,
+        `${JSON.stringify({ version: 1, allowFrom: ["legacy-scoped"] })}\n`,
+        "utf8",
+      );
+
+      const removed = await removeChannelAllowFromStoreEntry({
+        channel: "telegram",
+        accountId: "yy",
+        entry: "legacy-scoped",
+      });
+
+      expect(removed).toEqual({ changed: true, allowFrom: [] });
+      await expect(readChannelAllowFromStore("telegram", process.env, "yy")).resolves.toEqual([]);
+      expect(fsSync.existsSync(scopedPath)).toBe(false);
     });
   });
 

@@ -214,7 +214,7 @@ function resolveLegacyAllowFromPath(
   );
 }
 
-function readLegacyAllowFromEntries(filePath: string): string[] {
+function readLegacyAllowFromEntries(channel: PairingChannel, filePath: string): string[] {
   let raw = "";
   try {
     raw = fs.readFileSync(filePath, "utf8");
@@ -225,7 +225,7 @@ function readLegacyAllowFromEntries(filePath: string): string[] {
     const parsed = JSON.parse(raw) as { allowFrom?: unknown };
     const list = Array.isArray(parsed.allowFrom) ? parsed.allowFrom : [];
     return dedupePreserveOrder(
-      list.map((entry) => normalizeOptionalString(entry) ?? "").filter(Boolean),
+      list.map((entry) => normalizeAllowEntry(channel, String(entry))).filter(Boolean),
     );
   } catch {
     return [];
@@ -375,14 +375,41 @@ function readAllowFromState(channel: PairingChannel, env: NodeJS.ProcessEnv, acc
   const resolvedAccountId = resolveAllowFromAccountId(accountId);
   const state = readChannelPairingState(channel, env);
   const sqliteEntries = (state.allowFrom?.[resolvedAccountId] ?? []).slice();
-  const scopedLegacyEntries = readLegacyAllowFromEntries(
-    resolveLegacyAllowFromPath(channel, env, resolvedAccountId),
+  const legacyEntries = readLegacyAllowFromState(channel, env, resolvedAccountId);
+  return dedupePreserveOrder([...sqliteEntries, ...legacyEntries]);
+}
+
+function resolveLegacyAllowFromFallbackPaths(
+  channel: PairingChannel,
+  env: NodeJS.ProcessEnv,
+  resolvedAccountId: string,
+): string[] {
+  if (resolvedAccountId === DEFAULT_ACCOUNT_ID) {
+    return [resolveLegacyAllowFromPath(channel, env)];
+  }
+  return [resolveLegacyAllowFromPath(channel, env, resolvedAccountId)];
+}
+
+function readLegacyAllowFromState(
+  channel: PairingChannel,
+  env: NodeJS.ProcessEnv,
+  resolvedAccountId: string,
+): string[] {
+  return dedupePreserveOrder(
+    resolveLegacyAllowFromFallbackPaths(channel, env, resolvedAccountId).flatMap((filePath) =>
+      readLegacyAllowFromEntries(channel, filePath),
+    ),
   );
-  const defaultLegacyEntries =
-    resolvedAccountId === DEFAULT_ACCOUNT_ID
-      ? readLegacyAllowFromEntries(resolveLegacyAllowFromPath(channel, env))
-      : [];
-  return dedupePreserveOrder([...sqliteEntries, ...scopedLegacyEntries, ...defaultLegacyEntries]);
+}
+
+function removeLegacyAllowFromFallbackFiles(
+  channel: PairingChannel,
+  env: NodeJS.ProcessEnv,
+  resolvedAccountId: string,
+): void {
+  for (const filePath of resolveLegacyAllowFromFallbackPaths(channel, env, resolvedAccountId)) {
+    fs.rmSync(filePath, { force: true });
+  }
 }
 
 async function updateAllowFromStoreEntry(params: {
@@ -397,7 +424,9 @@ async function updateAllowFromStoreEntry(params: {
   const normalized = normalizeAllowFromInput(params.channel, params.entry);
   return runOpenClawStateWriteTransaction((database) => {
     const state = readChannelPairingStateFromDatabase(database, params.channel);
-    const current = (state.allowFrom?.[normalizedAccountId] ?? []).slice();
+    const sqliteEntries = (state.allowFrom?.[normalizedAccountId] ?? []).slice();
+    const legacyEntries = readLegacyAllowFromState(params.channel, env, normalizedAccountId);
+    const current = dedupePreserveOrder([...sqliteEntries, ...legacyEntries]);
     if (!normalized) {
       return { changed: false, allowFrom: current };
     }
@@ -408,6 +437,9 @@ async function updateAllowFromStoreEntry(params: {
     state.allowFrom ??= {};
     state.allowFrom[normalizedAccountId] = next;
     writeChannelPairingStateToDatabase(database, params.channel, state);
+    if (legacyEntries.length > 0) {
+      removeLegacyAllowFromFallbackFiles(params.channel, env, normalizedAccountId);
+    }
     return { changed: true, allowFrom: next };
   }, sqliteOptionsForEnv(env));
 }

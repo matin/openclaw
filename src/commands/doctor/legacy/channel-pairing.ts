@@ -267,8 +267,13 @@ export async function importLegacyChannelPairingFilesToSqlite(
         accountId = configuredAccountIds.get(accountId) ?? accountId;
       }
       const state = readChannelPairingState(allowFromTarget.channel, env);
+      const resolvedAccountId = resolveAllowFromAccountId(accountId);
+      const existingEntries = state.allowFrom?.[resolvedAccountId] ?? [];
       state.allowFrom ??= {};
-      state.allowFrom[resolveAllowFromAccountId(accountId)] = entries;
+      state.allowFrom[resolvedAccountId] = normalizeAllowFromList(allowFromTarget.channel, {
+        version: 1,
+        allowFrom: [...existingEntries, ...entries],
+      });
       writeChannelPairingState(allowFromTarget.channel, state, env);
       allowFrom += entries.length;
       await fs.rm(filePath, { force: true }).catch(() => undefined);
