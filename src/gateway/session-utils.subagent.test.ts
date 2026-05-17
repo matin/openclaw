@@ -8,10 +8,14 @@ import type { OpenClawConfig } from "../config/config.js";
 import { getSessionEntry, upsertSessionEntry, type SessionEntry } from "../config/sessions.js";
 import { replaceSqliteSessionTranscriptEvents } from "../config/sessions/transcript-store.sqlite.js";
 import { registerAgentRunContext, resetAgentRunContextForTest } from "../infra/agent-events.js";
-import { openOpenClawAgentDatabase } from "../state/openclaw-agent-db.js";
+import {
+  listOpenClawRegisteredAgentDatabases,
+  openOpenClawAgentDatabase,
+} from "../state/openclaw-agent-db.js";
 import { withStateDirEnv } from "../test-helpers/state-dir-env.js";
 import {
   listSessionsFromStore,
+  listSessionsFromStoreAsync,
   loadCombinedSessionEntriesForGateway,
   resolveGatewayModelSupportsImages,
 } from "./session-utils.js";
@@ -1219,6 +1223,7 @@ describe("loadCombinedSessionEntriesForGateway includes SQLite-registered agents
         cfg,
         databasePath: combined.databasePath,
         sourceDatabasePathBySessionKey: combined.sourceDatabasePathBySessionKey,
+        sourceAgentIdBySessionKey: combined.sourceAgentIdBySessionKey,
         store: combined.entries,
         opts: { agentId: "work", includeDerivedTitles: true, includeLastMessage: true },
       });
@@ -1230,6 +1235,67 @@ describe("loadCombinedSessionEntriesForGateway includes SQLite-registered agents
           lastMessagePreview: "relocated last",
         }),
       );
+    });
+  });
+
+  test("global rows from registered agent databases preserve their source agent", async () => {
+    await withStateDirEnv("openclaw-acp-registered-global-owner-", async ({ tempRoot }) => {
+      const databasePath = path.join(tempRoot, "relocated", "work.sqlite");
+      openOpenClawAgentDatabase({ agentId: "work", path: databasePath });
+      upsertSessionEntry({
+        agentId: "work",
+        path: databasePath,
+        sessionKey: "global",
+        entry: {
+          sessionId: "s-work-global",
+          updatedAt: 400,
+          modelProvider: "openai",
+          model: "gpt-5.4",
+        },
+      });
+      replaceSqliteSessionTranscriptEvents({
+        agentId: "work",
+        path: databasePath,
+        sessionId: "s-work-global",
+        events: [
+          { type: "session", version: 1, id: "s-work-global" },
+          { message: { role: "user", content: "work global title" } },
+          { message: { role: "assistant", content: "work global last" } },
+        ],
+      });
+      const cfg = {
+        session: {
+          mainKey: "main",
+        },
+        agents: {
+          list: [{ id: "main", default: true }],
+        },
+      } as OpenClawConfig;
+
+      const combined = loadCombinedSessionEntriesForGateway(cfg, { agentId: "work" });
+      expect(combined.entries.global?.sessionId).toBe("s-work-global");
+      expect(combined.sourceAgentIdBySessionKey?.global).toBe("work");
+      const result = await listSessionsFromStoreAsync({
+        cfg,
+        databasePath: combined.databasePath,
+        sourceDatabasePathBySessionKey: combined.sourceDatabasePathBySessionKey,
+        sourceAgentIdBySessionKey: combined.sourceAgentIdBySessionKey,
+        store: combined.entries,
+        opts: { includeGlobal: true, includeDerivedTitles: true, includeLastMessage: true },
+      });
+
+      expect(result.sessions[0]).toEqual(
+        expect.objectContaining({
+          key: "global",
+          derivedTitle: "work global title",
+          lastMessagePreview: "work global last",
+        }),
+      );
+      expect(
+        listOpenClawRegisteredAgentDatabases()
+          .filter((row) => row.path === databasePath)
+          .map((row) => row.agentId),
+      ).toEqual(["work"]);
     });
   });
 

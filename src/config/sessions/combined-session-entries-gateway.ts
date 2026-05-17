@@ -16,6 +16,7 @@ function mergeSessionEntryIntoCombined(params: {
   cfg: OpenClawConfig;
   combined: Record<string, SessionEntry>;
   sourceDatabasePathBySessionKey: Record<string, string>;
+  sourceAgentIdBySessionKey: Record<string, string>;
   sourceDatabasePath: string;
   entry: SessionEntry;
   agentId: string;
@@ -53,6 +54,7 @@ function mergeSessionEntryIntoCombined(params: {
     };
   }
   params.sourceDatabasePathBySessionKey[canonicalKey] = params.sourceDatabasePath;
+  params.sourceAgentIdBySessionKey[canonicalKey] = agentId;
 }
 
 export function loadCombinedSessionEntriesForGateway(
@@ -62,6 +64,7 @@ export function loadCombinedSessionEntriesForGateway(
   databasePath: string;
   entries: Record<string, SessionEntry>;
   sourceDatabasePathBySessionKey?: Record<string, string>;
+  sourceAgentIdBySessionKey?: Record<string, string>;
 } {
   const requestedAgentId =
     typeof opts.agentId === "string" && opts.agentId.trim()
@@ -76,6 +79,7 @@ export function loadCombinedSessionEntriesForGateway(
       : resolveAllAgentSessionDatabaseTargetsSync(cfg);
   const combined: Record<string, SessionEntry> = {};
   const sourceDatabasePathBySessionKey: Record<string, string> = {};
+  const sourceAgentIdBySessionKey: Record<string, string> = {};
   for (const target of targets) {
     const agentId = target.agentId;
     for (const { sessionKey: key, entry } of listSessionEntries({
@@ -91,6 +95,7 @@ export function loadCombinedSessionEntriesForGateway(
         cfg,
         combined,
         sourceDatabasePathBySessionKey,
+        sourceAgentIdBySessionKey,
         sourceDatabasePath: target.databasePath,
         entry,
         agentId,
@@ -105,5 +110,10 @@ export function loadCombinedSessionEntriesForGateway(
       : targets.length === 1
         ? targets[0].databasePath
         : "(multiple)";
-  return { databasePath, entries: combined, sourceDatabasePathBySessionKey };
+  return {
+    databasePath,
+    entries: combined,
+    sourceDatabasePathBySessionKey,
+    sourceAgentIdBySessionKey,
+  };
 }

@@ -901,6 +901,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
           databasePath,
           entries: store,
           sourceDatabasePathBySessionKey,
+          sourceAgentIdBySessionKey,
         } = measureDiagnosticsTimelineSpanSync(
           "gateway.sessions.list.store_load",
           () => {
@@ -938,6 +939,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
               cfg,
               databasePath,
               sourceDatabasePathBySessionKey,
+              sourceAgentIdBySessionKey,
               store,
               modelCatalog,
               opts: p,
