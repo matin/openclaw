@@ -380,7 +380,7 @@ function readLatestEquivalentAssistantMessageId(params: {
     }
     const candidateText = extractAssistantTranscriptEventText(event);
     if (candidateText === null) {
-      continue;
+      return undefined;
     }
     if (candidateText !== params.expectedText) {
       return undefined;

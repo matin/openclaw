@@ -96,11 +96,13 @@ struct DeviceIdentityStoreTests {
         }
     }
 
-    @Test("keeps default legacy device state under home openclaw dir")
-    func keepsDefaultLegacyDeviceStateUnderHomeOpenClawDir() throws {
+    @Test("keeps default legacy device state under app support OpenClaw dir")
+    func keepsDefaultLegacyDeviceStateUnderAppSupportOpenClawDir() throws {
         try Self.withDefaultStateEnvironment {
-            let expected = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".openclaw", isDirectory: true)
+            let appSupport = try #require(
+                FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first)
+            let expected = appSupport
+                .appendingPathComponent("OpenClaw", isDirectory: true)
                 .standardizedFileURL
 
             #expect(DeviceIdentityPaths.legacyStateDirURL().standardizedFileURL == expected)

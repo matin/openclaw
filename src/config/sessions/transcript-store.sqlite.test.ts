@@ -198,6 +198,55 @@ describe("SQLite session transcript store", () => {
     });
   });
 
+  it("does not dedupe delivery mirrors across newer non-text transcript events", () => {
+    const stateDir = createTempDir();
+    const scope = {
+      env: { OPENCLAW_STATE_DIR: stateDir },
+      agentId: "main",
+      sessionId: "session-1",
+      sessionVersion: 1,
+    };
+    const first = appendSqliteSessionTranscriptMessage({
+      ...scope,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Already delivered" }],
+      },
+      now: () => 100,
+    });
+    appendSqliteSessionTranscriptMessage({
+      ...scope,
+      message: { role: "user", content: "new turn" },
+      now: () => 150,
+    });
+
+    const mirror = appendSqliteSessionTranscriptMessage({
+      ...scope,
+      dedupeLatestAssistantText: "Already delivered",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Already delivered" }],
+      },
+      now: () => 200,
+    });
+
+    expect(mirror.messageId).not.toBe(first.messageId);
+    const events = loadSqliteSessionTranscriptEvents({
+      env: { OPENCLAW_STATE_DIR: stateDir },
+      agentId: "main",
+      sessionId: "session-1",
+    }).map((entry) => entry.event);
+    expect(events).toHaveLength(4);
+    expect(events[3]).toMatchObject({
+      type: "message",
+      id: mirror.messageId,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Already delivered" }],
+      },
+    });
+  });
+
   it("links transcript message parents inside the SQLite append transaction", () => {
     const stateDir = createTempDir();
     const first = appendSqliteSessionTranscriptMessage({
