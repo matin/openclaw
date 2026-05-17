@@ -2060,6 +2060,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       sessionId?: string;
       message: string;
       thinking?: string;
+      fastMode?: boolean;
       deliver?: boolean;
       originatingChannel?: string;
       originatingTo?: string;
@@ -2672,6 +2673,8 @@ export const chatHandlers: GatewayRequestHandlers = {
               abortSignal: activeRunAbort.controller.signal,
               images: parsedImages.length > 0 ? parsedImages : undefined,
               imageOrder: imageOrder.length > 0 ? imageOrder : undefined,
+              thinkingLevelOverride: p.thinking,
+              fastModeOverride: p.fastMode,
               onAgentRunStart: (runId) => {
                 agentRunStarted = true;
                 if (!hasBeforeAgentRunGate) {

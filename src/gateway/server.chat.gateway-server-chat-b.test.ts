@@ -727,6 +727,37 @@ describe("gateway server chat", () => {
     });
   });
 
+  test("chat.send forwards one-shot thinking and fast mode overrides", async () => {
+    await withGatewayChatHarness(async ({ ws, createSessionDir }) => {
+      const spy = getReplyFromConfig;
+      await connectOk(ws);
+
+      await createSessionDir();
+      await seedMainSessionEntry();
+      let capturedOpts: GetReplyOptions | undefined;
+      mockGetReplyFromConfigOnce(async (_ctx, opts) => {
+        capturedOpts = opts;
+        return undefined;
+      });
+
+      const sendRes = await rpcReq(ws, "chat.send", {
+        sessionKey: "main",
+        message: "hello",
+        thinking: "high",
+        fastMode: true,
+        idempotencyKey: "idem-thinking-fast",
+      });
+      expect(sendRes.ok).toBe(true);
+
+      await vi.waitFor(() => {
+        expect(spy.mock.calls.length).toBeGreaterThan(0);
+      }, FAST_WAIT_OPTS);
+
+      expect(capturedOpts?.thinkingLevelOverride).toBe("high");
+      expect(capturedOpts?.fastModeOverride).toBe(true);
+    });
+  });
+
   test("chat.history hard-caps single oversized nested payloads", async () => {
     await withGatewayChatHarness(async ({ ws, createSessionDir }) => {
       const historyMaxBytes = 64 * 1024;
