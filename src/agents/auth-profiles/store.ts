@@ -15,6 +15,7 @@ import {
   loadLegacyAuthProfileStoreEntry,
   loadPersistedAuthProfileStoreEntry,
   loadPersistedAuthProfileStoreEntryFromDatabase,
+  loadPersistedAuthProfileStoreEntryReadOnly,
   loadPersistedAuthProfileStore,
   mergeAuthProfileStores,
   savePersistedAuthProfileSecretsStoreInTransaction,
@@ -392,7 +393,9 @@ function loadAuthProfileStoreForAgent(
 ): AuthProfileStore {
   const readOnly = options?.readOnly === true;
   const storeKey = resolveAuthProfileStoreKey(agentDir, options?.env);
-  let persisted = loadPersistedAuthProfileStoreEntry(agentDir, { env: options?.env });
+  let persisted = readOnly
+    ? loadPersistedAuthProfileStoreEntryReadOnly(agentDir, { env: options?.env })
+    : loadPersistedAuthProfileStoreEntry(agentDir, { env: options?.env });
   let authMtimeMs = persisted?.updatedAt ?? null;
   if (!persisted) {
     const legacy = loadLegacyAuthProfileStoreEntry(agentDir, { env: options?.env });

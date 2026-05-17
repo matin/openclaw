@@ -19,6 +19,7 @@ import { resolveAuthProfileStoreAgentDir, resolveAuthProfileStoreKey } from "./p
 import {
   readAuthProfileStorePayloadResult,
   readAuthProfileStorePayloadResultFromDatabase,
+  readAuthProfileStorePayloadResultReadOnly,
   writeAuthProfileStorePayload,
   writeAuthProfileStorePayloadInTransaction,
   type AuthProfilePayloadValue,
@@ -27,6 +28,7 @@ import {
   coerceAuthProfileState,
   loadPersistedAuthProfileState,
   loadPersistedAuthProfileStateFromDatabase,
+  loadPersistedAuthProfileStateReadOnly,
   mergeAuthProfileState,
 } from "./state.js";
 import type {
@@ -867,6 +869,35 @@ export function loadPersistedAuthProfileStoreEntry(
     ...mergeAuthProfileState(
       coerceAuthProfileState(raw),
       loadPersistedAuthProfileState(agentDir, options),
+    ),
+  };
+  return {
+    store: merged,
+    updatedAt: result.updatedAt,
+  };
+}
+
+export function loadPersistedAuthProfileStoreEntryReadOnly(
+  agentDir?: string,
+  options: OpenClawStateDatabaseOptions = {},
+): PersistedAuthProfileStoreEntry | null {
+  const result = readAuthProfileStorePayloadResultReadOnly(
+    authProfileStoreKey(agentDir, options.env),
+    options,
+  );
+  if (!result.exists || result.value === undefined) {
+    return null;
+  }
+  const raw = result.value;
+  const store = coercePersistedAuthProfileStore(raw);
+  if (!store) {
+    return null;
+  }
+  const merged = {
+    ...store,
+    ...mergeAuthProfileState(
+      coerceAuthProfileState(raw),
+      loadPersistedAuthProfileStateReadOnly(agentDir, options),
     ),
   };
   return {

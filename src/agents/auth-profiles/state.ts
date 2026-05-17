@@ -11,6 +11,7 @@ import {
   deleteAuthProfileStatePayloadInTransaction,
   readAuthProfileStatePayloadResult,
   readAuthProfileStatePayloadResultFromDatabase,
+  readAuthProfileStatePayloadResultReadOnly,
   writeAuthProfileStatePayload as writeAuthProfileStatePayloadToSqlite,
   writeAuthProfileStatePayloadInTransaction,
   type AuthProfilePayloadValue,
@@ -213,6 +214,19 @@ export function loadPersistedAuthProfileState(
 ): AuthProfileState {
   const key = authProfileStateKey(agentDir, options.env);
   const sqliteState = readAuthProfileStatePayloadResult(key, options);
+  if (sqliteState.exists && sqliteState.value !== undefined) {
+    return coerceAuthProfileState(sqliteState.value);
+  }
+
+  return {};
+}
+
+export function loadPersistedAuthProfileStateReadOnly(
+  agentDir?: string,
+  options: OpenClawStateDatabaseOptions = {},
+): AuthProfileState {
+  const key = authProfileStateKey(agentDir, options.env);
+  const sqliteState = readAuthProfileStatePayloadResultReadOnly(key, options);
   if (sqliteState.exists && sqliteState.value !== undefined) {
     return coerceAuthProfileState(sqliteState.value);
   }

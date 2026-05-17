@@ -1,9 +1,13 @@
 import type { Insertable, Selectable } from "kysely";
+import fs from "node:fs";
+import type { DatabaseSync } from "node:sqlite";
 import {
+  clearNodeSqliteKyselyCacheForDatabase,
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
   getNodeSqliteKysely,
 } from "../../infra/kysely-sync.js";
+import { requireNodeSqlite } from "../../infra/node-sqlite.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../../state/openclaw-state-db.generated.js";
 import {
   openOpenClawStateDatabase,
@@ -11,6 +15,7 @@ import {
   type OpenClawStateDatabase,
   type OpenClawStateDatabaseOptions,
 } from "../../state/openclaw-state-db.js";
+import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
 
 export type AuthProfilePayloadValue =
   | null
@@ -59,6 +64,23 @@ function rowToReadResult(row: PayloadRow | undefined): AuthProfilePayloadReadRes
   };
 }
 
+function openExistingReadOnlyStateDatabase(
+  options?: OpenClawStateDatabaseOptions,
+): DatabaseSync | null {
+  const env = options?.env ?? process.env;
+  const pathname = options?.path ?? resolveOpenClawStateSqlitePath(env);
+  if (!fs.existsSync(pathname)) {
+    return null;
+  }
+
+  try {
+    const sqlite = requireNodeSqlite();
+    return new sqlite.DatabaseSync(pathname, { readOnly: true });
+  } catch {
+    return null;
+  }
+}
+
 function authProfileStorePayloadToRow(
   storeKey: string,
   value: AuthProfilePayloadValue,
@@ -91,6 +113,32 @@ export function readAuthProfileStorePayloadResult(
     openOpenClawStateDatabase(options),
     storeKey,
   );
+}
+
+export function readAuthProfileStorePayloadResultReadOnly(
+  storeKey: string,
+  options: OpenClawStateDatabaseOptions = {},
+): AuthProfilePayloadReadResult {
+  const database = openExistingReadOnlyStateDatabase(options);
+  if (!database) {
+    return { exists: false };
+  }
+  try {
+    const db = getNodeSqliteKysely<AuthProfileStoreDatabase>(database);
+    const row = executeSqliteQueryTakeFirstSync(
+      database,
+      db
+        .selectFrom("auth_profile_stores")
+        .select(["store_json", "updated_at"])
+        .where("store_key", "=", storeKey),
+    );
+    return rowToReadResult(row);
+  } catch {
+    return { exists: false };
+  } finally {
+    clearNodeSqliteKyselyCacheForDatabase(database);
+    database.close();
+  }
 }
 
 export function readAuthProfileStorePayloadResultFromDatabase(
@@ -165,6 +213,32 @@ export function readAuthProfileStatePayloadResult(
     openOpenClawStateDatabase(options),
     storeKey,
   );
+}
+
+export function readAuthProfileStatePayloadResultReadOnly(
+  storeKey: string,
+  options: OpenClawStateDatabaseOptions = {},
+): AuthProfilePayloadReadResult {
+  const database = openExistingReadOnlyStateDatabase(options);
+  if (!database) {
+    return { exists: false };
+  }
+  try {
+    const db = getNodeSqliteKysely<AuthProfileStoreDatabase>(database);
+    const row = executeSqliteQueryTakeFirstSync(
+      database,
+      db
+        .selectFrom("auth_profile_state")
+        .select(["state_json", "updated_at"])
+        .where("store_key", "=", storeKey),
+    );
+    return rowToReadResult(row);
+  } catch {
+    return { exists: false };
+  } finally {
+    clearNodeSqliteKyselyCacheForDatabase(database);
+    database.close();
+  }
 }
 
 export function readAuthProfileStatePayloadResultFromDatabase(
