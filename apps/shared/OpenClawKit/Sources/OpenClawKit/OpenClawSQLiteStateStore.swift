@@ -434,6 +434,7 @@ public enum OpenClawSQLiteStateStore {
             defer { sqlite3_close(db) }
             throw self.sqliteError(db, context: "SQLite state open failed")
         }
+        sqlite3_busy_timeout(db, 30_000)
         try self.configureStateDatabase(db)
         self.hardenStateDatabaseFiles()
         return db

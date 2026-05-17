@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import SQLite3
 
 public struct DeviceIdentity: Codable, Sendable {
     public var deviceId: String
@@ -80,12 +81,7 @@ public enum DeviceIdentityStore {
     ])
 
     public static func loadOrCreate() -> DeviceIdentity {
-        let row: OpenClawSQLiteDeviceIdentityRow?
-        do {
-            row = try OpenClawSQLiteStateStore.readDeviceIdentityChecked(key: self.identityKey)
-        } catch {
-            preconditionFailure("Failed to read stored OpenClaw device identity from SQLite: \(error)")
-        }
+        let row = self.readStoredIdentityRow()
         if let row {
             switch self.decodeStoredIdentity(self.storedIdentity(from: row)) {
             case .identity(let decoded):
@@ -96,8 +92,9 @@ public enum DeviceIdentityStore {
         }
         switch self.loadLegacyIdentity() {
         case .some(.identity(let identity)):
-            self.save(identity)
-            try? FileManager.default.removeItem(at: self.legacyIdentityURL())
+            if self.save(identity) {
+                try? FileManager.default.removeItem(at: self.legacyIdentityURL())
+            }
             return identity
         case .some(.recognizedInvalid):
             preconditionFailure(
@@ -107,7 +104,7 @@ public enum DeviceIdentityStore {
             break
         }
         let identity = self.generate()
-        self.save(identity)
+        _ = self.save(identity)
         return identity
     }
 
@@ -124,6 +121,41 @@ public enum DeviceIdentityStore {
     private enum DecodeResult {
         case identity(DeviceIdentity)
         case recognizedInvalid
+    }
+
+    private static func readStoredIdentityRow() -> OpenClawSQLiteDeviceIdentityRow? {
+        do {
+            return try self.withSQLiteRetry {
+                try OpenClawSQLiteStateStore.readDeviceIdentityChecked(key: self.identityKey)
+            }
+        } catch {
+            return nil
+        }
+    }
+
+    private static func withSQLiteRetry<T>(_ operation: () throws -> T) throws -> T {
+        var lastError: Error?
+        for attempt in 0..<3 {
+            do {
+                return try operation()
+            } catch {
+                lastError = error
+                guard attempt < 2, self.isTransientSQLiteError(error) else {
+                    throw error
+                }
+                Thread.sleep(forTimeInterval: 0.05 * Double(attempt + 1))
+            }
+        }
+        throw lastError ?? NSError(
+            domain: "OpenClawSQLiteStateStore",
+            code: Int(SQLITE_ERROR),
+            userInfo: [NSLocalizedDescriptionKey: "SQLite operation failed"])
+    }
+
+    private static func isTransientSQLiteError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        guard nsError.domain == "OpenClawSQLiteStateStore" else { return false }
+        return nsError.code == Int(SQLITE_BUSY) || nsError.code == Int(SQLITE_LOCKED)
     }
 
     private static func storedIdentity(from row: OpenClawSQLiteDeviceIdentityRow) -> StoredDeviceIdentity {
@@ -265,18 +297,22 @@ public enum DeviceIdentityStore {
         SHA256.hash(data: publicKeyData).compactMap { String(format: "%02x", $0) }.joined()
     }
 
-    private static func save(_ identity: DeviceIdentity) {
+    @discardableResult
+    private static func save(_ identity: DeviceIdentity) -> Bool {
         do {
             let stored = self.storedIdentity(from: identity)
-            try OpenClawSQLiteStateStore.writeDeviceIdentity(
-                key: self.identityKey,
-                identity: OpenClawSQLiteDeviceIdentityRow(
-                    deviceId: stored.deviceId,
-                    publicKeyPem: stored.publicKeyPem,
-                    privateKeyPem: stored.privateKeyPem,
-                    createdAtMs: stored.createdAtMs))
+            try self.withSQLiteRetry {
+                try OpenClawSQLiteStateStore.writeDeviceIdentity(
+                    key: self.identityKey,
+                    identity: OpenClawSQLiteDeviceIdentityRow(
+                        deviceId: stored.deviceId,
+                        publicKeyPem: stored.publicKeyPem,
+                        privateKeyPem: stored.privateKeyPem,
+                        createdAtMs: stored.createdAtMs))
+            }
+            return true
         } catch {
-            preconditionFailure("Failed to persist OpenClaw device identity in SQLite: \(error)")
+            return false
         }
     }
 

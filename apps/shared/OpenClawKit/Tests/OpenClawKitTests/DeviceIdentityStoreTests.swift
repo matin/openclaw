@@ -36,6 +36,21 @@ struct DeviceIdentityStoreTests {
         }
     }
 
+    @Test("keeps loadOrCreate nonfatal when SQLite identity read fails")
+    func keepsLoadOrCreateNonfatalWhenSQLiteIdentityReadFails() throws {
+        try Self.withTempStateDir { stateDir in
+            try FileManager.default.createDirectory(
+                at: Self.databaseURL(stateDir: stateDir),
+                withIntermediateDirectories: true)
+
+            let identity = DeviceIdentityStore.loadOrCreate()
+
+            #expect(!identity.deviceId.isEmpty)
+            #expect(!identity.publicKey.isEmpty)
+            #expect(!identity.privateKey.isEmpty)
+        }
+    }
+
     @Test("loads TypeScript PEM identity schema from SQLite")
     func loadsTypeScriptPEMIdentitySchema() throws {
         try Self.withTempStateDir { stateDir in
