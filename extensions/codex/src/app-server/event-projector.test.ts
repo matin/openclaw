@@ -1331,7 +1331,9 @@ describe("CodexAppServerEventProjector", () => {
     const onAgentEvent = vi.fn();
     const onToolResult = vi.fn();
     const trajectoryRecorder = {
+      enabled: true as const,
       filePath: "trajectory.jsonl",
+      runtimeScope: "sqlite:test:trajectory:session-1",
       recordEvent: vi.fn(),
       flush: vi.fn(async () => undefined),
     };
@@ -1523,7 +1525,9 @@ describe("CodexAppServerEventProjector", () => {
   it("does not duplicate native tool starts when the snapshot completes a started item", async () => {
     const onAgentEvent = vi.fn();
     const trajectoryRecorder = {
+      enabled: true as const,
       filePath: "trajectory.jsonl",
+      runtimeScope: "sqlite:test:trajectory:session-1",
       recordEvent: vi.fn(),
       flush: vi.fn(async () => undefined),
     };

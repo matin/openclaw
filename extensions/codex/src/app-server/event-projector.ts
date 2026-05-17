@@ -1415,6 +1415,7 @@ export class CodexAppServerEventProjector {
   }
 
   private createAssistantMessage(text: string): AssistantMessage {
+    const attribution = resolveCodexLocalRuntimeAttribution(this.params);
     const usage: Usage = this.tokenUsage
       ? {
           input: this.tokenUsage.input ?? 0,
@@ -1433,8 +1434,8 @@ export class CodexAppServerEventProjector {
     return {
       role: "assistant",
       content: [{ type: "text", text }],
-      api: this.params.model.api ?? "openai-codex-responses",
-      provider: this.params.provider,
+      api: attribution.api ?? "openai-codex-responses",
+      provider: attribution.provider,
       model: this.params.modelId,
       usage,
       stopReason: this.aborted ? "aborted" : this.promptError ? "error" : "stop",
@@ -1444,11 +1445,12 @@ export class CodexAppServerEventProjector {
   }
 
   private createAssistantMirrorMessage(title: string, text: string): AssistantMessage {
+    const attribution = resolveCodexLocalRuntimeAttribution(this.params);
     return {
       role: "assistant",
       content: [{ type: "text", text: `${title}:\n${text}` }],
-      api: this.params.model.api ?? "openai-codex-responses",
-      provider: this.params.provider,
+      api: attribution.api ?? "openai-codex-responses",
+      provider: attribution.provider,
       model: this.params.modelId,
       usage: ZERO_USAGE,
       stopReason: "stop",
@@ -1458,6 +1460,7 @@ export class CodexAppServerEventProjector {
 
   private createToolCallMessage(params: ToolTranscriptCallInput): AgentMessage {
     const args = normalizeToolTranscriptArguments(params.arguments);
+    const attribution = resolveCodexLocalRuntimeAttribution(this.params);
     return {
       role: "assistant",
       content: [
@@ -1469,8 +1472,8 @@ export class CodexAppServerEventProjector {
           input: args,
         },
       ],
-      api: this.params.model.api ?? "openai-codex-responses",
-      provider: this.params.provider,
+      api: attribution.api ?? "openai-codex-responses",
+      provider: attribution.provider,
       model: this.params.modelId,
       usage: ZERO_USAGE,
       stopReason: "toolUse",
