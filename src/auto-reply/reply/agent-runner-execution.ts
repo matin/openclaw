@@ -48,7 +48,6 @@ import { isMessagingToolSendAction } from "../../agents/pi-embedded-messaging.js
 import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
 import { buildAgentRuntimeOutcomePlan } from "../../agents/runtime-plan/build.js";
 import {
-  deleteSessionEntry,
   getSessionEntry,
   resolveGroupSessionKey,
   type SessionEntry,
@@ -2404,8 +2403,6 @@ export async function runAgentTurnWithFallback(params: {
       const isCompactionFailure = !isBilling && isCompactionFailureError(message);
       const providerRequestError =
         !isBilling && !shouldSurfaceToControlUi ? classifyProviderRequestError(err) : undefined;
-      const isSessionCorruption = /function call turn comes immediately after/i.test(message);
-      const isRoleOrderingError = /incorrect role information|roles must alternate/i.test(message);
       const isTransientHttp = isTransientHttpError(message);
 
       if (isReplyOperationRestartAbort(params.replyOperation)) {
@@ -2467,51 +2464,6 @@ export async function runAgentTurnWithFallback(params: {
           }),
         };
       }
-      if (isRoleOrderingError) {
-        const didReset = await params.resetSessionAfterRoleOrderingConflict(message);
-        if (didReset) {
-          params.replyOperation?.fail("run_failed", err);
-          return {
-            kind: "final",
-            payload: markAgentRunFailureReplyPayload({
-              text: "⚠️ Message ordering conflict. I've reset the conversation - please try again.",
-            }),
-          };
-        }
-      }
-
-      // Auto-recover from Gemini session corruption by resetting the session
-      if (isSessionCorruption && params.sessionKey) {
-        const sessionKey = params.sessionKey;
-        defaultRuntime.error(
-          `Session history corrupted (Gemini function call ordering). Resetting session: ${params.sessionKey}`,
-        );
-
-        try {
-          // Keep the in-memory snapshot consistent with the SQLite row reset.
-          if (params.activeSessionStore) {
-            delete params.activeSessionStore[sessionKey];
-          }
-
-          deleteSessionEntry({
-            agentId: sessionAgentId,
-            sessionKey,
-          });
-        } catch (cleanupErr) {
-          defaultRuntime.error(
-            `Failed to reset corrupted session ${params.sessionKey}: ${String(cleanupErr)}`,
-          );
-        }
-
-        params.replyOperation?.fail("session_corruption_reset", err);
-        return {
-          kind: "final",
-          payload: markAgentRunFailureReplyPayload({
-            text: "⚠️ Session history was corrupted. I've reset the conversation - please try again!",
-          }),
-        };
-      }
-
       if (providerRequestError) {
         params.replyOperation?.fail("run_failed", err);
         return {

@@ -28,6 +28,7 @@ const gatewayMocks = vi.hoisted(() => ({
 const helperMocks = vi.hoisted(() => ({
   persistSubagentSessionTiming: vi.fn(async () => {}),
   logAnnounceGiveUp: vi.fn(),
+  safeRemoveAttachmentsDir: vi.fn(async () => {}),
 }));
 
 const runtimeMocks = vi.hoisted(() => ({
@@ -93,6 +94,7 @@ vi.mock("./subagent-registry-helpers.js", () => ({
   capFrozenResultText: (text: string) => text.trim(),
   logAnnounceGiveUp: helperMocks.logAnnounceGiveUp,
   persistSubagentSessionTiming: helperMocks.persistSubagentSessionTiming,
+  safeRemoveAttachmentsDir: helperMocks.safeRemoveAttachmentsDir,
   resolveAnnounceRetryDelayMs: (retryCount: number) =>
     Math.min(1_000 * 2 ** Math.max(0, retryCount - 1), 8_000),
 }));
