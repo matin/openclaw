@@ -476,7 +476,10 @@ function scrubVolatileSqliteSnapshotRows(db: import("node:sqlite").DatabaseSync)
   }
 }
 
-async function listSqliteDatabasePaths(root: string): Promise<string[]> {
+async function listSqliteDatabasePaths(
+  root: string,
+  opts: { includePath?: (filePath: string) => boolean } = {},
+): Promise<string[]> {
   const results: string[] = [];
   async function walk(dir: string): Promise<void> {
     let entries: Array<{ name: string; isDirectory: () => boolean; isFile: () => boolean }>;
@@ -487,6 +490,9 @@ async function listSqliteDatabasePaths(root: string): Promise<string[]> {
     }
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
+      if (opts.includePath && !opts.includePath(fullPath)) {
+        continue;
+      }
       if (entry.isDirectory()) {
         await walk(fullPath);
       } else if (entry.isFile() && isSqliteDatabasePath(fullPath)) {
@@ -572,10 +578,14 @@ async function stageBackupAssets(params: {
 
     const stagedPath = path.join(params.tempDir, "state-snapshot");
     const volatilePlan = { stateDirs: [asset.sourcePath] };
+    const includeExtensionsPath = buildExtensionsNodeModulesFilter(asset.sourcePath);
     await fs.cp(asset.sourcePath, stagedPath, {
       recursive: true,
       verbatimSymlinks: true,
       filter: (source) => {
+        if (!includeExtensionsPath(source)) {
+          return false;
+        }
         if (isSqliteDatabasePath(source) || isSqliteSidecarPath(source)) {
           return false;
         }
@@ -587,7 +597,9 @@ async function stageBackupAssets(params: {
       },
     });
 
-    for (const sqlitePath of await listSqliteDatabasePaths(asset.sourcePath)) {
+    for (const sqlitePath of await listSqliteDatabasePaths(asset.sourcePath, {
+      includePath: includeExtensionsPath,
+    })) {
       const relative = path.relative(asset.sourcePath, sqlitePath);
       const snapshotPath = path.join(stagedPath, relative);
       const snapshot = await snapshotSqliteDatabase({

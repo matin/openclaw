@@ -372,6 +372,78 @@ describe("backup commands", () => {
     ]);
   });
 
+  it("does not declare SQLite snapshots from skipped extension node_modules", async () => {
+    const stateDir = path.join(tempHome.home, ".openclaw");
+    const sqliteDir = path.join(stateDir, "state");
+    const sqlitePath = path.join(sqliteDir, "openclaw.sqlite");
+    const skippedSqlitePath = path.join(
+      stateDir,
+      "extensions",
+      "sample",
+      "node_modules",
+      "cache.sqlite",
+    );
+    await fs.mkdir(sqliteDir, { recursive: true });
+    await fs.mkdir(path.dirname(skippedSqlitePath), { recursive: true });
+    await fs.writeFile(path.join(stateDir, "openclaw.json"), JSON.stringify({}), "utf8");
+    const sqlite = requireNodeSqlite();
+    for (const [dbPath, value] of [
+      [sqlitePath, "kept"],
+      [skippedSqlitePath, "skipped"],
+    ] as const) {
+      const db = new sqlite.DatabaseSync(dbPath);
+      try {
+        db.exec(`
+          CREATE TABLE sample (value TEXT NOT NULL);
+          INSERT INTO sample (value) VALUES ('${value}');
+        `);
+      } finally {
+        db.close();
+      }
+    }
+    await mockStateOnlyBackupPlan(stateDir);
+
+    let capturedManifest: {
+      databaseSnapshots?: Array<{ sourcePath: string; archivePath: string; integrity: string }>;
+    } | null = null;
+    tarCreateMock.mockImplementationOnce(
+      async (options: { file: string }, entryPaths: string[]) => {
+        const manifestPath = entryPaths[0];
+        expect(manifestPath).toBeTruthy();
+        capturedManifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as {
+          databaseSnapshots?: Array<{
+            sourcePath: string;
+            archivePath: string;
+            integrity: string;
+          }>;
+        };
+        const stagedStatePath = entryPaths.find((entryPath) =>
+          entryPath.endsWith("state-snapshot"),
+        );
+        expect(stagedStatePath).toBeTruthy();
+        await expect(
+          fs.access(path.join(stagedStatePath!, "extensions", "sample", "node_modules")),
+        ).rejects.toThrow();
+        await fs.writeFile(options.file, "archive-bytes", "utf8");
+      },
+    );
+
+    const runtime = createBackupTestRuntime();
+    const result = await backupCreateCommand(runtime, { includeWorkspace: false });
+    const stateAsset = result.assets.find((asset) => asset.kind === "state");
+
+    const manifest = capturedManifest as {
+      databaseSnapshots?: Array<{ sourcePath: string; archivePath: string; integrity: string }>;
+    } | null;
+    expect(manifest?.databaseSnapshots).toEqual([
+      expect.objectContaining({
+        sourcePath: path.join(stateAsset!.sourcePath, "state", "openclaw.sqlite"),
+        archivePath: path.posix.join(stateAsset!.archivePath, "state/openclaw.sqlite"),
+        integrity: "ok",
+      }),
+    ]);
+  });
+
   it("rejects output paths that would be created inside a backed-up directory", async () => {
     const stateDir = path.join(tempHome.home, ".openclaw");
     await fs.writeFile(path.join(stateDir, "openclaw.json"), JSON.stringify({}), "utf8");
