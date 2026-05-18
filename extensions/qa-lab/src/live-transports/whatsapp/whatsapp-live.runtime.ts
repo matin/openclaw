@@ -390,7 +390,12 @@ function findScenarios(ids?: string[]) {
   });
 }
 
-const WHATSAPP_QA_DENIED_MODEL_TOOLS = ["session_status", "sessions_*", "web_search"];
+const WHATSAPP_QA_DENIED_MODEL_TOOLS = [
+  "bundle-mcp",
+  "session_status",
+  "sessions_*",
+  "web_search",
+];
 
 function mergeDeniedModelTools(existing?: string[]): string[] {
   return [...new Set([...(existing ?? []), ...WHATSAPP_QA_DENIED_MODEL_TOOLS])];

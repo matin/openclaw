@@ -14,6 +14,7 @@ import {
   buildContextEnginePromptCacheInfo,
   buildAutoAddedToolSearchControlNamesForAllowlistCheck,
   buildCallableToolNamesForEmptyAllowlistCheck,
+  resolveAttemptConstructionToolsAllow,
   buildToolSearchRunPlan,
   buildAfterTurnRuntimeContext,
   buildAfterTurnRuntimeContextFromUsage,
@@ -140,6 +141,34 @@ describe("resolveEmbeddedAttemptSessionWriteLockOptions", () => {
     });
 
     expect(options.maxHoldMs).toBe(720_000);
+  });
+});
+
+describe("resolveAttemptConstructionToolsAllow", () => {
+  it("uses the active messaging profile to prune construction before tool factories run", () => {
+    const config: OpenClawConfig = {
+      tools: {
+        profile: "messaging",
+        deny: ["bundle-mcp", "session_status", "sessions_*"],
+      },
+    };
+
+    expect(
+      resolveAttemptConstructionToolsAllow({
+        config,
+        modelProvider: "openai",
+        modelId: "gpt-5.5",
+      }),
+    ).toEqual(["message"]);
+  });
+
+  it("keeps runtime toolsAllow authoritative", () => {
+    expect(
+      resolveAttemptConstructionToolsAllow({
+        config: { tools: { profile: "messaging" } },
+        runtimeToolsAllow: ["read"],
+      }),
+    ).toEqual(["read"]);
   });
 });
 

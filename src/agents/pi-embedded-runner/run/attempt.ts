@@ -195,7 +195,12 @@ import {
   collectExplicitToolAllowlistSources,
 } from "../../tool-allowlist-guard.js";
 import { UNKNOWN_TOOL_THRESHOLD } from "../../tool-loop-detection.js";
-import { normalizeToolName } from "../../tool-policy.js";
+import {
+  mergeAlsoAllowPolicy,
+  normalizeToolName,
+  resolveToolProfilePolicy,
+} from "../../tool-policy.js";
+import { isToolAllowedByPolicyName } from "../../tool-policy-match.js";
 import {
   addClientToolsToToolSearchCatalog,
   applyToolSearchCatalog,
@@ -1208,6 +1213,49 @@ function collectAttemptExplicitToolAllowlistSources(params: {
   ]);
 }
 
+export function resolveAttemptConstructionToolsAllow(params: {
+  config?: EmbeddedRunAttemptParams["config"];
+  sessionKey?: string;
+  agentId?: string;
+  modelProvider?: string;
+  modelId?: string;
+  runtimeToolsAllow?: string[];
+}): string[] | undefined {
+  if (params.runtimeToolsAllow !== undefined) {
+    return params.runtimeToolsAllow;
+  }
+  const policy = resolveEffectiveToolPolicy({
+    config: params.config,
+    sessionKey: params.sessionKey,
+    agentId: params.agentId,
+    modelProvider: params.modelProvider,
+    modelId: params.modelId,
+  });
+  const allow = [
+    ...(mergeAlsoAllowPolicy(resolveToolProfilePolicy(policy.profile), policy.profileAlsoAllow)
+      ?.allow ?? []),
+    ...(mergeAlsoAllowPolicy(
+      resolveToolProfilePolicy(policy.providerProfile),
+      policy.providerProfileAlsoAllow,
+    )?.allow ?? []),
+  ]
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (allow.length === 0 || allow.some((entry) => normalizeToolName(entry) === "*")) {
+    return undefined;
+  }
+  const deny = [
+    ...(policy.globalPolicy?.deny ?? []),
+    ...(policy.globalProviderPolicy?.deny ?? []),
+    ...(policy.agentPolicy?.deny ?? []),
+    ...(policy.agentProviderPolicy?.deny ?? []),
+  ];
+  const filtered = deny.length
+    ? allow.filter((entry) => isToolAllowedByPolicyName(entry, { deny }))
+    : allow;
+  return [...new Set(filtered)];
+}
+
 export async function runEmbeddedAttempt(
   params: EmbeddedRunAttemptParams,
 ): Promise<EmbeddedRunAttemptResult> {
@@ -1418,10 +1466,18 @@ export async function runEmbeddedAttempt(
           params.sourceReplyDeliveryMode === "message_tool_only",
       },
     );
+    const constructionToolsAllow = resolveAttemptConstructionToolsAllow({
+      config: params.config,
+      sessionKey: params.sessionKey,
+      agentId: sessionAgentId,
+      modelProvider: params.provider,
+      modelId: params.modelId,
+      runtimeToolsAllow: toolsAllowWithForcedRuntimeTools,
+    });
     const toolConstructionPlan = resolveEmbeddedAttemptToolConstructionPlan({
       disableTools: params.disableTools,
       isRawModelRun,
-      toolsAllow: toolsAllowWithForcedRuntimeTools,
+      toolsAllow: constructionToolsAllow,
     });
     const toolsEnabled = supportsModelTools(params.model);
     const codeModeConfig = resolveCodeModeConfig(params.config, sessionAgentId);
@@ -1438,15 +1494,18 @@ export async function runEmbeddedAttempt(
       params.toolsAllow?.length !== 0 &&
       !codeModeControlsEnabledForRun &&
       resolveToolSearchConfig(params.config).enabled;
+    const toolSearchBaseToolsAllow = constructionToolsAllow ?? toolsAllowWithForcedRuntimeTools;
     const effectiveToolsAllow =
-      toolSearchControlsEnabledForRun && toolsAllowWithForcedRuntimeTools
+      toolSearchControlsEnabledForRun &&
+      toolSearchBaseToolsAllow !== undefined &&
+      toolSearchBaseToolsAllow.length > 0
         ? [
             ...new Set([
-              ...toolsAllowWithForcedRuntimeTools,
+              ...toolSearchBaseToolsAllow,
               ...TOOL_SEARCH_CONTROL_ALLOWLIST_NAMES,
             ]),
           ]
-        : toolsAllowWithForcedRuntimeTools;
+        : toolSearchBaseToolsAllow;
     const shouldConstructTools =
       toolConstructionPlan.constructTools ||
       toolSearchControlsEnabledForRun ||
@@ -1719,7 +1778,7 @@ export async function runEmbeddedAttempt(
     const bundleMcpEnabled = shouldCreateBundleMcpRuntimeForAttempt({
       toolsEnabled,
       disableTools: params.disableTools || isRawModelRun,
-      toolsAllow: params.toolsAllow,
+      toolsAllow: constructionToolsAllow,
     });
     const bundleMcpSessionRuntime = bundleMcpEnabled
       ? await getOrCreateSessionMcpRuntime({
@@ -1741,7 +1800,7 @@ export async function runEmbeddedAttempt(
     const bundleLspEnabled = shouldCreateBundleLspRuntimeForAttempt({
       toolsEnabled,
       disableTools: params.disableTools || isRawModelRun,
-      toolsAllow: params.toolsAllow,
+      toolsAllow: constructionToolsAllow,
     });
     const bundleLspRuntime = bundleLspEnabled
       ? await createBundleLspToolRuntime({
