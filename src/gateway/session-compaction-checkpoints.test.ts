@@ -398,6 +398,72 @@ describe("session-compaction-checkpoints", () => {
     });
   });
 
+  test("async fork prefers legacy checkpoint file over current SQLite session id", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-checkpoint-legacy-file-"));
+    tempDirs.push(dir);
+    const sourceSessionId = "legacy-checkpoint-source";
+    const snapshotFile = path.join(dir, "legacy-checkpoint.jsonl");
+    await fs.writeFile(
+      snapshotFile,
+      [
+        JSON.stringify({
+          type: "session",
+          id: sourceSessionId,
+          timestamp: new Date(0).toISOString(),
+          cwd: dir,
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "pre-leaf",
+          parentId: null,
+          timestamp: new Date(1).toISOString(),
+          message: { role: "user", content: "legacy pre-compaction snapshot" },
+        }),
+        "",
+      ].join("\n"),
+    );
+    replaceSqliteSessionTranscriptEvents({
+      agentId: DEFAULT_AGENT_ID,
+      sessionId: sourceSessionId,
+      events: [
+        {
+          type: "session",
+          id: sourceSessionId,
+          timestamp: new Date(2).toISOString(),
+          cwd: dir,
+        },
+        {
+          type: "message",
+          id: "post-leaf",
+          parentId: null,
+          timestamp: new Date(3).toISOString(),
+          message: { role: "user", content: "current post-compaction transcript" },
+        },
+      ],
+    });
+
+    const forked = await forkCompactionCheckpointTranscriptAsync({
+      agentId: DEFAULT_AGENT_ID,
+      sourceSessionId,
+      sourceSessionFile: snapshotFile,
+    });
+
+    expect(forked).not.toBeNull();
+    const forkedEntries = readSqliteTranscriptEvents(forked!.sessionId);
+    expect(forkedEntries[1]).toMatchObject({
+      id: "pre-leaf",
+      message: { role: "user", content: "legacy pre-compaction snapshot" },
+    });
+    expect(forkedEntries).not.toContainEqual(
+      expect.objectContaining({
+        id: "post-leaf",
+      }),
+    );
+    expect(readSqliteTranscriptEvents(sourceSessionId)[1]).toMatchObject({
+      id: "post-leaf",
+    });
+  });
+
   test("persist trims old checkpoint metadata and removes trimmed SQLite snapshots", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-checkpoint-trim-"));
     tempDirs.push(dir);

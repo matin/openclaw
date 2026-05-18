@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import {
   CURRENT_SESSION_VERSION,
   type SessionHeader,
@@ -148,6 +149,38 @@ function loadBoundedTranscriptEntriesFromSqlite(params: {
     : null;
 }
 
+async function loadBoundedTranscriptEntriesFromLegacyFile(params: {
+  sessionFile?: string;
+  maxBytes?: number;
+}): Promise<PiTranscriptEntry[] | null> {
+  const sessionFile = params.sessionFile?.trim();
+  if (!sessionFile) {
+    return null;
+  }
+  const maxBytes = normalizeSnapshotMaxBytes(params.maxBytes);
+  try {
+    const stat = await fs.stat(sessionFile);
+    if (!stat.isFile() || stat.size <= 0 || stat.size > maxBytes) {
+      return null;
+    }
+    const entries = (await fs.readFile(sessionFile, "utf-8"))
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .flatMap((line) => {
+        try {
+          const parsed = JSON.parse(line) as unknown;
+          return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? [parsed] : [];
+        } catch {
+          return [];
+        }
+      });
+    return cloneTranscriptEvents(entries);
+  } catch {
+    return null;
+  }
+}
+
 function latestEntryId(entries: readonly PiTranscriptEntry[]): string | null {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index] as { type?: unknown; id?: unknown } | undefined;
@@ -178,17 +211,24 @@ export async function readSessionLeafIdFromTranscriptAsync(
 
 export async function forkCompactionCheckpointTranscriptAsync(params: {
   sourceSessionId: string;
+  sourceSessionFile?: string;
   agentId: string;
   path?: string;
   targetCwd?: string;
   maxBytes?: number;
 }): Promise<ForkedCompactionCheckpointTranscript | null> {
-  const entries = loadBoundedTranscriptEntriesFromSqlite({
-    agentId: params.agentId,
-    path: params.path,
-    sessionId: params.sourceSessionId,
+  const legacyFileEntries = await loadBoundedTranscriptEntriesFromLegacyFile({
+    sessionFile: params.sourceSessionFile,
     maxBytes: params.maxBytes,
   });
+  const entries =
+    legacyFileEntries ??
+    loadBoundedTranscriptEntriesFromSqlite({
+      agentId: params.agentId,
+      path: params.path,
+      sessionId: params.sourceSessionId,
+      maxBytes: params.maxBytes,
+    });
   if (!entries) {
     return null;
   }
@@ -391,6 +431,9 @@ export async function persistSessionCompactionCheckpoint(params: {
     return null;
   }
   for (const removed of trimmedCheckpoints?.removed ?? []) {
+    if (removed.preCompaction.sessionFile) {
+      continue;
+    }
     deleteSqliteSessionTranscriptSnapshot({
       agentId: target.agentId,
       path: target.databasePath,

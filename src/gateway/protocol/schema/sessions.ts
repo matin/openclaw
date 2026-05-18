@@ -25,6 +25,7 @@ export const SessionOperationEventSchema = Type.Object(
 export const SessionCompactionTranscriptReferenceSchema = Type.Object(
   {
     sessionId: NonEmptyString,
+    sessionFile: Type.Optional(NonEmptyString),
     leafId: Type.Optional(NonEmptyString),
     entryId: Type.Optional(NonEmptyString),
   },

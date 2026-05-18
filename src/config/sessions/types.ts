@@ -77,6 +77,8 @@ export type SessionCompactionCheckpointReason =
 
 export type SessionCompactionTranscriptReference = {
   sessionId: string;
+  /** Deprecated JSONL snapshot path for checkpoints created before SQLite transcript snapshots. */
+  sessionFile?: string;
   leafId?: string;
   entryId?: string;
 };

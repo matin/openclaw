@@ -1516,6 +1516,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       agentId: target.agentId,
       path: target.databasePath,
       sourceSessionId: checkpoint.preCompaction.sessionId,
+      sourceSessionFile: checkpoint.preCompaction.sessionFile,
     });
     if (!branchedSession?.sessionId) {
       respond(
@@ -1633,6 +1634,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       agentId: target.agentId,
       path: target.databasePath,
       sourceSessionId: checkpoint.preCompaction.sessionId,
+      sourceSessionFile: checkpoint.preCompaction.sessionFile,
     });
     if (!restoredSession?.sessionId) {
       respond(
