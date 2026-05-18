@@ -1,4 +1,7 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { resolveUserPath } from "../utils.js";
 import { getCurrentPluginMetadataSnapshot } from "./current-plugin-metadata-snapshot.js";
 import { isInstalledPluginEnabled } from "./installed-plugin-index.js";
 import type { PluginManifestContractListKey, PluginManifestRecord } from "./manifest-registry.js";
@@ -107,9 +110,23 @@ export function loadManifestMetadataSnapshot(params: {
   if (current) {
     return current;
   }
+  if (params.workspaceDir && !workspacePluginRootExists(params.workspaceDir, env)) {
+    const defaultWorkspaceCurrent = getCurrentPluginMetadataSnapshot({
+      config,
+      env,
+      allowWorkspaceScopedSnapshot: true,
+    });
+    if (defaultWorkspaceCurrent) {
+      return defaultWorkspaceCurrent;
+    }
+  }
   return loadPluginMetadataSnapshot({
     config,
     env,
     ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
   });
+}
+
+function workspacePluginRootExists(workspaceDir: string, env: NodeJS.ProcessEnv): boolean {
+  return existsSync(path.join(resolveUserPath(workspaceDir, env), ".openclaw", "extensions"));
 }

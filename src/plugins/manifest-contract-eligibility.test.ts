@@ -1,9 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  existsSync: vi.fn(),
   getCurrentPluginMetadataSnapshot: vi.fn(),
   loadPluginMetadataSnapshot: vi.fn(),
 }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    default: {
+      ...actual,
+      existsSync: mocks.existsSync,
+    },
+    existsSync: mocks.existsSync,
+  };
+});
 
 vi.mock("./current-plugin-metadata-snapshot.js", () => ({
   getCurrentPluginMetadataSnapshot: mocks.getCurrentPluginMetadataSnapshot,
@@ -18,6 +31,7 @@ import { loadManifestContractSnapshot } from "./manifest-contract-eligibility.js
 describe("loadManifestContractSnapshot", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.existsSync.mockReturnValue(false);
     mocks.getCurrentPluginMetadataSnapshot.mockReturnValue(undefined);
     mocks.loadPluginMetadataSnapshot.mockReturnValue({
       index: { plugins: [] },
@@ -44,6 +58,61 @@ describe("loadManifestContractSnapshot", () => {
       workspaceDir: "/workspace",
     });
     expect(mocks.loadPluginMetadataSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("reuses the stored workspace snapshot when a requested workspace has no plugins", () => {
+    const env = { HOME: "/home/snapshot" } as NodeJS.ProcessEnv;
+    const current = {
+      index: { plugins: [] },
+      plugins: [],
+    };
+    mocks.getCurrentPluginMetadataSnapshot
+      .mockReturnValueOnce(undefined)
+      .mockReturnValueOnce(current);
+
+    expect(loadManifestContractSnapshot({ config: {}, workspaceDir: "/agent-workspace", env }))
+      .toEqual({
+        index: current.index,
+        plugins: current.plugins,
+      });
+
+    expect(mocks.existsSync).toHaveBeenCalledWith(
+      "/agent-workspace/.openclaw/extensions",
+    );
+    expect(mocks.getCurrentPluginMetadataSnapshot).toHaveBeenNthCalledWith(1, {
+      config: {},
+      env,
+      workspaceDir: "/agent-workspace",
+    });
+    expect(mocks.getCurrentPluginMetadataSnapshot).toHaveBeenNthCalledWith(2, {
+      config: {},
+      env,
+      allowWorkspaceScopedSnapshot: true,
+    });
+    expect(mocks.loadPluginMetadataSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the scoped metadata loader when the requested workspace has plugins", () => {
+    const env = { HOME: "/home/snapshot" } as NodeJS.ProcessEnv;
+    const snapshot = {
+      index: { plugins: [{ pluginId: "workspace" }] },
+      plugins: [{ id: "workspace" }],
+    };
+    mocks.existsSync.mockReturnValue(true);
+    mocks.loadPluginMetadataSnapshot.mockReturnValue(snapshot);
+
+    expect(loadManifestContractSnapshot({ config: {}, workspaceDir: "/agent-workspace", env }))
+      .toEqual({
+        index: snapshot.index,
+        plugins: snapshot.plugins,
+      });
+
+    expect(mocks.getCurrentPluginMetadataSnapshot).toHaveBeenCalledTimes(1);
+    expect(mocks.loadPluginMetadataSnapshot).toHaveBeenCalledWith({
+      config: {},
+      env,
+      workspaceDir: "/agent-workspace",
+    });
   });
 
   it("opts unscoped callers into the stored workspace-scoped snapshot", () => {
