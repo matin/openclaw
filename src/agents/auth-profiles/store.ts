@@ -342,8 +342,12 @@ export async function updateAuthProfileStoreWithLock(params: {
           params.agentDir,
           { env: params.env },
         );
+        const legacy = persisted
+          ? null
+          : loadLegacyAuthProfileStoreEntry(params.agentDir, { env: params.env });
         const store =
           persisted?.store ??
+          legacy?.store ??
           ({
             version: AUTH_STORE_VERSION,
             profiles: {},

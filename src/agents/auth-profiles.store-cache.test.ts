@@ -9,6 +9,7 @@ import {
   clearRuntimeAuthProfileStoreSnapshots,
   ensureAuthProfileStore,
   saveAuthProfileStore,
+  updateAuthProfileStoreWithLock,
 } from "./auth-profiles/store.js";
 import type { OAuthCredential } from "./auth-profiles/types.js";
 
@@ -153,6 +154,43 @@ describe("auth profile store cache", () => {
       expect((persisted?.profiles["openai:default"] as { key?: string } | undefined)?.key).toBe(
         "sk-legacy",
       );
+    });
+  });
+
+  it("preserves legacy auth profiles during locked SQLite updates", async () => {
+    await withAgentDirEnv("openclaw-auth-store-locked-legacy-import-", async (agentDir) => {
+      vi.stubEnv("OPENCLAW_STATE_DIR", path.join(agentDir, "state"));
+      fs.writeFileSync(
+        path.join(agentDir, "auth-profiles.json"),
+        JSON.stringify({
+          openai: {
+            type: "api_key",
+            provider: "openai",
+            key: "sk-legacy",
+          },
+        }),
+        "utf8",
+      );
+
+      await updateAuthProfileStoreWithLock({
+        agentDir,
+        updater: (store) => {
+          store.profiles["anthropic:default"] = {
+            type: "api_key",
+            provider: "anthropic",
+            key: "sk-new",
+          };
+          return true;
+        },
+      });
+
+      const persisted = loadPersistedAuthProfileStore(agentDir);
+      expect((persisted?.profiles["openai:default"] as { key?: string } | undefined)?.key).toBe(
+        "sk-legacy",
+      );
+      expect(
+        (persisted?.profiles["anthropic:default"] as { key?: string } | undefined)?.key,
+      ).toBe("sk-new");
     });
   });
 

@@ -81,7 +81,14 @@ public enum DeviceIdentityStore {
     ])
 
     public static func loadOrCreate() -> DeviceIdentity {
-        let row = self.readStoredIdentityRow()
+        let row: OpenClawSQLiteDeviceIdentityRow?
+        do {
+            row = try self.readStoredIdentityRow()
+        } catch {
+            preconditionFailure(
+                "OpenClaw device identity SQLite read failed: \(error.localizedDescription). " +
+                    "Run openclaw doctor --fix before starting runtime.")
+        }
         if let row {
             switch self.decodeStoredIdentity(self.storedIdentity(from: row)) {
             case .identity(let decoded):
@@ -123,13 +130,9 @@ public enum DeviceIdentityStore {
         case recognizedInvalid
     }
 
-    private static func readStoredIdentityRow() -> OpenClawSQLiteDeviceIdentityRow? {
-        do {
-            return try self.withSQLiteRetry {
-                try OpenClawSQLiteStateStore.readDeviceIdentityChecked(key: self.identityKey)
-            }
-        } catch {
-            return nil
+    private static func readStoredIdentityRow() throws -> OpenClawSQLiteDeviceIdentityRow? {
+        try self.withSQLiteRetry {
+            try OpenClawSQLiteStateStore.readDeviceIdentityChecked(key: self.identityKey)
         }
     }
 
