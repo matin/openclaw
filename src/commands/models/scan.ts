@@ -202,7 +202,7 @@ export async function modelsScanCommand(
     throw new Error("--timeout must be > 0");
   }
   const concurrency = parsePositiveIntegerOption(opts.concurrency, undefined);
-  if (opts.concurrency && concurrency === undefined) {
+  if (opts.concurrency !== undefined && concurrency === undefined) {
     throw new Error("--concurrency must be a positive integer");
   }
 

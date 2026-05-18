@@ -168,7 +168,7 @@ describe("models scan command", () => {
     await expect(modelsScanCommand({ maxCandidates: "" }, runtime)).rejects.toThrow(
       "--max-candidates must be a positive integer",
     );
-    await expect(modelsScanCommand({ concurrency: " " }, runtime)).rejects.toThrow(
+    await expect(modelsScanCommand({ concurrency: "" }, runtime)).rejects.toThrow(
       "--concurrency must be a positive integer",
     );
 
