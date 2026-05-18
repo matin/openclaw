@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../../infra/kysely-sync.js";
 import type { DB as OpenClawAgentKyselyDatabase } from "../../state/openclaw-agent-db.generated.js";
 import {
@@ -15,6 +15,11 @@ import type { SessionEntry } from "./types.js";
 type DeliveryInfoTestDatabase = Pick<OpenClawAgentKyselyDatabase, "session_entries">;
 
 const ORIGINAL_STATE_DIR = process.env.OPENCLAW_STATE_DIR;
+const runtimeConfigMock = vi.hoisted(() => vi.fn(() => ({}) as OpenClawConfig));
+
+vi.mock("../io.js", () => ({
+  getRuntimeConfig: runtimeConfigMock,
+}));
 
 function setStateDir(): NodeJS.ProcessEnv {
   const stateDir = `${process.env.TMPDIR ?? "/tmp"}/openclaw-delivery-info-${randomUUID()}`;
@@ -57,6 +62,8 @@ function corruptStoredEntryJson(params: {
 afterEach(() => {
   closeOpenClawAgentDatabasesForTest();
   closeOpenClawStateDatabaseForTest();
+  runtimeConfigMock.mockReset();
+  runtimeConfigMock.mockReturnValue({} as OpenClawConfig);
   if (ORIGINAL_STATE_DIR === undefined) {
     delete process.env.OPENCLAW_STATE_DIR;
   } else {
@@ -168,6 +175,40 @@ describe("extractDeliveryInfo", () => {
         accountId: "work",
       },
       threadId: undefined,
+    });
+  });
+
+  it("uses runtime config to search registered agent databases when cfg is omitted", () => {
+    const env = setStateDir();
+    const cfg = {
+      agents: {
+        list: [{ id: "main", default: true }, { id: "ops" }],
+      },
+    } as OpenClawConfig;
+    runtimeConfigMock.mockReturnValue(cfg);
+    const sessionKey = "agent:ops:matrix:channel:!ops:example.org";
+    const registeredPath = `${env.OPENCLAW_STATE_DIR}/registered/ops.sqlite`;
+    upsertSessionEntry({
+      agentId: "ops",
+      env,
+      path: registeredPath,
+      sessionKey,
+      entry: buildEntry({
+        channel: "matrix",
+        to: "!ops:example.org",
+        accountId: "work",
+        threadId: "$thread",
+      }),
+    });
+
+    expect(extractDeliveryInfo(sessionKey)).toEqual({
+      deliveryContext: {
+        channel: "matrix",
+        to: "!ops:example.org",
+        accountId: "work",
+        threadId: "$thread",
+      },
+      threadId: "$thread",
     });
   });
 

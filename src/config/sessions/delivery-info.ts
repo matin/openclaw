@@ -5,6 +5,7 @@ import {
 } from "../../routing/session-key.js";
 import { deliveryContextFromSession } from "../../utils/delivery-context.shared.js";
 import type { DeliveryContext } from "../../utils/delivery-context.types.js";
+import { getRuntimeConfig } from "../io.js";
 import type { OpenClawConfig } from "../types.openclaw.js";
 import { normalizeSessionRowKey } from "./store-entry.js";
 import { getSessionEntry } from "./store.js";
@@ -99,9 +100,13 @@ export function extractDeliveryInfo(
   const { baseSessionKey, threadId } = parseSessionThreadInfo(sessionKey);
   const lookupKey = baseSessionKey ?? sessionKey;
   try {
+    const lookupOptions = {
+      ...options,
+      cfg: options.cfg ?? getRuntimeConfig(),
+    };
     const entry =
-      readDeliverySessionEntry(lookupKey, options) ??
-      (lookupKey === sessionKey ? undefined : readDeliverySessionEntry(sessionKey, options));
+      readDeliverySessionEntry(lookupKey, lookupOptions) ??
+      (lookupKey === sessionKey ? undefined : readDeliverySessionEntry(sessionKey, lookupOptions));
     const deliveryContext = toExtractedDeliveryContext(entry);
     return {
       deliveryContext,

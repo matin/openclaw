@@ -69,4 +69,24 @@ describe("hasAnyAuthProfileStoreSource", () => {
       });
     });
   });
+
+  it("does not create SQLite state while probing an empty auth source", () => {
+    withTempAgentDir("openclaw-auth-source-empty-", (agentDir) => {
+      const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+      try {
+        const stateDir = path.join(agentDir, "state");
+        process.env.OPENCLAW_STATE_DIR = stateDir;
+        const sqlitePath = path.join(stateDir, "state", "openclaw.sqlite");
+
+        expect(hasAnyAuthProfileStoreSource(agentDir)).toBe(false);
+        expect(fs.existsSync(sqlitePath)).toBe(false);
+      } finally {
+        if (previousStateDir === undefined) {
+          delete process.env.OPENCLAW_STATE_DIR;
+        } else {
+          process.env.OPENCLAW_STATE_DIR = previousStateDir;
+        }
+      }
+    });
+  });
 });
