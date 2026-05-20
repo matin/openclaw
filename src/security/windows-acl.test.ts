@@ -929,6 +929,12 @@ Successfully processed 1 files`;
       expectTrustedOnly([aclEntry({ principal: "AUTORIDAD NT\\SYSTEM" })]);
     });
 
+    it("does not trust misspelled localized SYSTEM principals", () => {
+      const summary = summarizeWindowsAcl([aclEntry({ principal: "NT Authority\\Syst\u00e9me" })]);
+      expect(summary.trusted).toHaveLength(0);
+      expect(summary.untrustedGroup).toHaveLength(1);
+    });
+
     it("French Windows full scenario: user + Système only → no untrusted", () => {
       const entries: WindowsAclEntry[] = [
         aclEntry({ principal: "MYPC\\Pierre" }),
