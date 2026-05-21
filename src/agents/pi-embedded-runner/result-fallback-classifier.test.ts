@@ -24,8 +24,7 @@ describe("classifyEmbeddedPiRunResultForModelFallback", () => {
         'zai/glm-5.1 ended with a provider error: {"success":false,"code":"CE-011","message":"当前ak因违规请求被禁止访问该模型"}',
       reason: "auth",
       code: "embedded_error_payload",
-      rawError:
-        '{"success":false,"code":"CE-011","message":"当前ak因违规请求被禁止访问该模型"}',
+      rawError: '{"success":false,"code":"CE-011","message":"当前ak因违规请求被禁止访问该模型"}',
     });
   });
 

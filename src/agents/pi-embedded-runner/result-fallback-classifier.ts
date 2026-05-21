@@ -1,7 +1,7 @@
 import { isSilentReplyPayloadText } from "../../auto-reply/tokens.js";
-import { classifyFailoverReason } from "../pi-embedded-helpers/errors.js";
 import { isGpt5ModelId } from "../gpt5-prompt-overlay.js";
 import type { ModelFallbackResultClassification } from "../model-fallback.js";
+import { classifyFailoverReason } from "../pi-embedded-helpers/errors.js";
 import { hasOutboundDeliveryEvidence, hasVisibleAgentPayload } from "./delivery-evidence.js";
 import type { EmbeddedPiRunResult } from "./types.js";
 
