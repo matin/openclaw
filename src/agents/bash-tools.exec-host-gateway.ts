@@ -1,7 +1,6 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { describeInterpreterInlineEval } from "../infra/command-analysis/inline-eval.js";
 import { detectPolicyInlineEval } from "../infra/command-analysis/policy.js";
-import { explainShellCommand } from "../infra/command-explainer/extract.js";
 import {
   addDurableCommandApproval,
   type ExecAsk,
@@ -15,6 +14,7 @@ import {
   requiresExecApproval,
 } from "../infra/exec-approvals.js";
 import { buildAuthorizedShellCommandFromPlan } from "../infra/exec-authorization-render.js";
+import { inspectControlShellCommand } from "../infra/exec-control-shell-policy.js";
 import type { SafeBinProfile } from "../infra/exec-safe-bin-policy.js";
 import { markBackgrounded, tail } from "./bash-process-registry.js";
 import {
@@ -99,121 +99,6 @@ function hasGatewayAllowlistMiss(params: {
     (!params.analysisOk || !params.allowlistSatisfied) &&
     !params.durableApprovalSatisfied
   );
-}
-
-function normalizeCommandName(value: string | undefined): string {
-  return (value ?? "").split(/[\\/]/).pop()?.toLowerCase() ?? "";
-}
-
-function textMentionsSecurityAuditSuppressions(value: string): boolean {
-  const normalized = value.toLowerCase();
-  return (
-    normalized.includes("security.audit.suppressions") ||
-    /["']?security["']?[\s\S]{0,200}["']?audit["']?[\s\S]{0,200}["']?suppressions["']?/.test(
-      normalized,
-    )
-  );
-}
-
-function isReadOnlySecurityAuditSuppressionInspection(argv: string[]): boolean {
-  const command = normalizeCommandName(argv[0]);
-  let offset = command === "pnpm" && argv[1] === "openclaw" ? 1 : 0;
-  if (normalizeCommandName(argv[offset]) !== "openclaw") {
-    return false;
-  }
-  offset += 1;
-  while (offset < argv.length) {
-    const arg = argv[offset];
-    if (["--dev", "--no-color"].includes(arg ?? "")) {
-      offset += 1;
-      continue;
-    }
-    if (["--profile", "--container", "--log-level"].includes(arg ?? "")) {
-      offset += 2;
-      continue;
-    }
-    if (
-      arg?.startsWith("--profile=") ||
-      arg?.startsWith("--container=") ||
-      arg?.startsWith("--log-level=")
-    ) {
-      offset += 1;
-      continue;
-    }
-    break;
-  }
-  return (
-    argv[offset] === "config" && ["get", "schema", "validate"].includes(argv[offset + 1] ?? "")
-  );
-}
-
-function removeParsedSegmentText(command: string, segments: Array<{ raw?: string }>): string {
-  let remaining = command;
-  for (const segment of segments) {
-    const raw = segment.raw?.trim();
-    if (!raw) {
-      continue;
-    }
-    remaining = remaining.replace(raw, " ");
-  }
-  return remaining;
-}
-
-async function explainShellSegmentsForPolicy(params: {
-  command: string;
-}): Promise<Array<{ argv: string[]; raw?: string }> | null> {
-  try {
-    const explanation = await explainShellCommand(params.command);
-    if (!explanation.ok) {
-      return null;
-    }
-    return [...explanation.topLevelCommands, ...explanation.nestedCommands].map((step) => ({
-      argv: step.argv,
-      raw: step.text,
-    }));
-  } catch {
-    return null;
-  }
-}
-
-async function commandRequiresSecurityAuditSuppressionApproval(params: {
-  command: string;
-  segments: Array<{ argv: string[]; raw?: string }>;
-}): Promise<boolean> {
-  let sawSegmentMention = false;
-  for (const segment of params.segments) {
-    const segmentText = `${segment.raw ?? ""} ${segment.argv.join(" ")}`;
-    if (!textMentionsSecurityAuditSuppressions(segmentText)) {
-      continue;
-    }
-    sawSegmentMention = true;
-    if (!isReadOnlySecurityAuditSuppressionInspection(segment.argv)) {
-      return true;
-    }
-  }
-  if (sawSegmentMention) {
-    const rawSegments = await explainShellSegmentsForPolicy({
-      command: params.command,
-    });
-    if (!rawSegments) {
-      return textMentionsSecurityAuditSuppressions(params.command);
-    }
-    for (const segment of rawSegments) {
-      if (
-        textMentionsSecurityAuditSuppressions(`${segment.raw} ${segment.argv.join(" ")}`) &&
-        !isReadOnlySecurityAuditSuppressionInspection(segment.argv)
-      ) {
-        return true;
-      }
-    }
-    if (
-      textMentionsSecurityAuditSuppressions(removeParsedSegmentText(params.command, rawSegments))
-    ) {
-      return true;
-    }
-    return false;
-  }
-  return textMentionsSecurityAuditSuppressions(params.command);
 }
 
 function formatOutcomeExitLabel(outcome: { exitCode: number | null; timedOut: boolean }): string {
@@ -455,11 +340,19 @@ export async function processGatewayAllowlist(
     allowlistSatisfied &&
     !enforcedCommand &&
     allowlistPlanUnavailableReason !== null;
-  const requiresSecurityAuditSuppressionApproval =
-    (await commandRequiresSecurityAuditSuppressionApproval({
-      command: params.command,
-      segments: allowlistEval.segments,
-    })) && !(hostSecurity === "full" && hostAsk === "off");
+  const controlShellDecision = await inspectControlShellCommand({
+    command: params.command,
+    parsedSegments: allowlistEval.segments,
+  });
+  if (controlShellDecision.kind === "deny") {
+    throw new Error(controlShellDecision.message);
+  }
+  const requiresControlShellApproval =
+    controlShellDecision.kind === "requires-approval" &&
+    !(hostSecurity === "full" && hostAsk === "off");
+  if (requiresControlShellApproval) {
+    params.warnings.push(controlShellDecision.warning);
+  }
   const requiresAsk =
     requiresExecApproval({
       ask: hostAsk,
@@ -471,7 +364,7 @@ export async function processGatewayAllowlist(
     requiresAllowlistPlanApproval ||
     requiresHeredocApproval ||
     requiresInlineEvalApproval ||
-    requiresSecurityAuditSuppressionApproval;
+    requiresControlShellApproval;
   if (requiresHeredocApproval) {
     params.warnings.push(
       "Warning: heredoc execution requires explicit approval in allowlist mode.",
@@ -480,11 +373,6 @@ export async function processGatewayAllowlist(
   if (requiresAllowlistPlanApproval) {
     params.warnings.push(
       `Warning: allowlist auto-execution is unavailable on ${process.platform}; explicit approval is required.`,
-    );
-  }
-  if (requiresSecurityAuditSuppressionApproval) {
-    params.warnings.push(
-      "Warning: security audit suppression changes require explicit approval unless exec is running in yolo mode.",
     );
   }
 

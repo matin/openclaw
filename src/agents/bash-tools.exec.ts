@@ -2,8 +2,6 @@ import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { buildCommandPayloadCandidates } from "../infra/command-analysis/risks.js";
-import { explainShellCommand } from "../infra/command-explainer/extract.js";
 import {
   type ExecAsk,
   type ExecHost,
@@ -12,6 +10,10 @@ import {
   maxAsk,
   requireValidExecTarget,
 } from "../infra/exec-approvals.js";
+import {
+  inspectControlShellCommand,
+  parseOpenClawChannelsLoginShellCommand,
+} from "../infra/exec-control-shell-policy.js";
 import { resolveExecSafeBinRuntimePolicy } from "../infra/exec-safe-bin-runtime-policy.js";
 import { sanitizeHostExecEnvWithDiagnostics } from "../infra/host-env-security.js";
 import {
@@ -1101,128 +1103,10 @@ function shouldSkipExecScriptPreflight(params: {
   return params.host === "gateway" && params.security === "full" && params.ask === "off";
 }
 
-type ParsedExecApprovalCommand = {
-  approvalId: string;
-  decision: "allow-once" | "allow-always" | "deny";
-};
-
-function parseExecApprovalShellCommand(raw: string): ParsedExecApprovalCommand | null {
-  const normalized = raw.trimStart();
-  const match = normalized.match(
-    /^\/approve(?:@[^\s]+)?\s+([A-Za-z0-9][A-Za-z0-9._:-]*)\s+(allow-once|allow-always|always|deny)\b/i,
-  );
-  if (!match) {
-    return null;
-  }
-  return {
-    approvalId: match[1],
-    decision:
-      normalizeLowercaseStringOrEmpty(match[2]) === "always"
-        ? "allow-always"
-        : (normalizeLowercaseStringOrEmpty(match[2]) as ParsedExecApprovalCommand["decision"]),
-  };
-}
-
-function normalizeCommandBaseName(token: string | undefined): string {
-  if (!token) {
-    return "";
-  }
-  const base = normalizeLowercaseStringOrEmpty(token.split(/[\\/]/u).at(-1));
-  return base.replace(/\.(?:cmd|exe)$/u, "");
-}
-
-function stripOpenClawPackageRunner(argv: string[]): string[] {
-  const commandName = normalizeCommandBaseName(argv[0]);
-  if (commandName === "openclaw") {
-    return argv;
-  }
-  if (
-    (commandName === "pnpm" || commandName === "npm" || commandName === "yarn") &&
-    normalizeCommandBaseName(argv[1]) === "openclaw"
-  ) {
-    return argv.slice(1);
-  }
-  if (
-    (commandName === "pnpm" || commandName === "npm" || commandName === "yarn") &&
-    (argv[1] === "exec" || argv[1] === "dlx" || argv[1] === "run") &&
-    normalizeCommandBaseName(argv[2]) === "openclaw"
-  ) {
-    return argv.slice(2);
-  }
-  if (commandName === "npx" || commandName === "bunx") {
-    let idx = 1;
-    while (idx < argv.length) {
-      const token = argv[idx];
-      if (token === "--") {
-        idx += 1;
-        break;
-      }
-      if (!token.startsWith("-") || token === "-") {
-        break;
-      }
-      idx += 1;
-      if ((token === "-p" || token === "--package") && idx < argv.length) {
-        idx += 1;
-      }
-    }
-    if (normalizeCommandBaseName(argv[idx]) === "openclaw") {
-      return argv.slice(idx);
-    }
-  }
-  return argv;
-}
-
-function parseOpenClawChannelsLoginShellCommand(raw: string): boolean {
-  const argv = splitShellArgs(raw);
-  if (!argv) {
-    return false;
-  }
-  const openclawArgv = stripOpenClawPackageRunner(argv);
-  return (
-    normalizeCommandBaseName(openclawArgv[0]) === "openclaw" &&
-    (openclawArgv[1] === "channels" || openclawArgv[1] === "channel") &&
-    openclawArgv[2] === "login"
-  );
-}
-
 async function rejectUnsafeControlShellCommand(command: string): Promise<void> {
-  const rawCommand = command.trim();
-  let candidates: string[] | null = null;
-  try {
-    const explanation = await explainShellCommand(rawCommand);
-    if (explanation.ok) {
-      candidates = [...explanation.topLevelCommands, ...explanation.nestedCommands].flatMap(
-        (step) => buildCommandPayloadCandidates(step.argv),
-      );
-    }
-  } catch {
-    candidates = null;
-  }
-  candidates ??= rawCommand
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .flatMap((line) => {
-      const argv = splitShellArgs(line);
-      return argv ? buildCommandPayloadCandidates(argv) : [line];
-    });
-  for (const candidate of candidates) {
-    if (parseExecApprovalShellCommand(candidate)) {
-      throw new Error(
-        [
-          "exec cannot run /approve commands.",
-          "Show the /approve command to the user as chat text, or route it through the approval command handler instead of shell execution.",
-        ].join(" "),
-      );
-    }
-    if (parseOpenClawChannelsLoginShellCommand(candidate)) {
-      throw new Error(
-        [
-          "exec cannot run interactive OpenClaw channel login commands.",
-          "Run `openclaw channels login` in a terminal on the gateway host, or use the channel-specific login agent tool when available (for WhatsApp: `whatsapp_login`).",
-        ].join(" "),
-      );
-    }
+  const decision = await inspectControlShellCommand({ command });
+  if (decision.kind === "deny") {
+    throw new Error(decision.message);
   }
 }
 
