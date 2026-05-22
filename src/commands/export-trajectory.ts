@@ -48,12 +48,24 @@ function decodeExportTrajectoryRequest(encoded: string): Partial<ExportTrajector
     throw new Error("Encoded trajectory export request must be a JSON object");
   }
   const request = decoded as EncodedExportTrajectoryRequest;
-  return {
-    sessionKey: readOptionalString(request.sessionKey) ?? "",
-    output: readOptionalString(request.output),
-    agent: readOptionalString(request.agent),
-    workspace: readOptionalString(request.workspace),
-  };
+  const options: Partial<ExportTrajectoryCommandOptions> = {};
+  const sessionKey = readOptionalString(request.sessionKey);
+  if (sessionKey !== undefined) {
+    options.sessionKey = sessionKey;
+  }
+  const output = readOptionalString(request.output);
+  if (output !== undefined) {
+    options.output = output;
+  }
+  const agent = readOptionalString(request.agent);
+  if (agent !== undefined) {
+    options.agent = agent;
+  }
+  const workspace = readOptionalString(request.workspace);
+  if (workspace !== undefined) {
+    options.workspace = workspace;
+  }
+  return options;
 }
 
 function resolveExportTrajectoryOptions(

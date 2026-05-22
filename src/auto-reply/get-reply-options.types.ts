@@ -1,6 +1,7 @@
 import type { ImageContent } from "../agents/pi-ai-contract.js";
 import type { PromptImageOrderEntry } from "../media/prompt-image-order.js";
 import type { ReplyPayload } from "./reply-payload.js";
+import type { ReplyOperation } from "./reply/reply-run-registry.js";
 import type { TypingController } from "./reply/typing.js";
 
 export type BlockReplyContext = {
@@ -199,4 +200,10 @@ export type GetReplyOptions = {
   hasRepliedRef?: { value: boolean };
   /** Override agent timeout in seconds (0 = no timeout). Threads through to resolveAgentTimeoutMs. */
   timeoutOverrideSeconds?: number;
+  /** Pre-created operation for channel dispatch paths that register active runs before reply prep. */
+  replyOperation?: ReplyOperation;
+  /** Capability-checked one-turn model override for inline image input. */
+  modelOverride?: string;
+  /** Capability-checked runtime fallbacks for the one-turn image model override. */
+  modelOverrideFallbacks?: string[];
 };

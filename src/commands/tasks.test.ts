@@ -1,6 +1,6 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { upsertSessionEntry } from "../config/sessions/store.js";
+import type { SessionEntry } from "../config/sessions/types.js";
 import type { RuntimeEnv } from "../runtime.js";
 import {
   createManagedTaskFlow,
@@ -38,6 +38,14 @@ const zeroTaskAuditCounts = {
   stale_queued: 0,
   stale_running: 0,
 };
+
+function seedMainSessionRow(sessionKey: string, entry: SessionEntry): void {
+  upsertSessionEntry({
+    agentId: "main",
+    sessionKey,
+    entry,
+  });
+}
 
 async function withTaskCommandStateDir(
   run: (state: OpenClawTestState) => Promise<void>,
@@ -159,22 +167,10 @@ describe("tasks commands", () => {
       });
       vi.setSystemTime(now);
 
-      const sessionsDir = state.sessionsDir("main");
-      await fs.mkdir(sessionsDir, { recursive: true });
-      await fs.writeFile(
-        path.join(sessionsDir, "sessions.json"),
-        JSON.stringify(
-          {
-            [childSessionKey]: {
-              sessionId: "child-retained",
-              updatedAt: now,
-            },
-          },
-          null,
-          2,
-        ),
-        "utf8",
-      );
+      seedMainSessionRow(childSessionKey, {
+        sessionId: "child-retained",
+        updatedAt: now,
+      });
 
       const runtime = createRuntime();
       await tasksMaintenanceCommand({ json: true, apply: false }, runtime);
@@ -201,7 +197,7 @@ describe("tasks commands", () => {
     });
   });
 
-  it("explains task maintenance decisions before applying session registry pruning", async () => {
+  it("explains task maintenance decisions before any later session registry pruning", async () => {
     await withTaskCommandStateDir(async (state) => {
       const now = Date.now();
       vi.useFakeTimers();
@@ -218,23 +214,10 @@ describe("tasks commands", () => {
       });
       vi.setSystemTime(now);
 
-      const sessionsDir = state.sessionsDir("main");
-      const storePath = path.join(sessionsDir, "sessions.json");
-      await fs.mkdir(sessionsDir, { recursive: true });
-      await fs.writeFile(
-        storePath,
-        JSON.stringify(
-          {
-            [childSessionKey]: {
-              sessionId: "old-run",
-              updatedAt: now - 8 * 24 * 60 * 60_000,
-            },
-          },
-          null,
-          2,
-        ),
-        "utf8",
-      );
+      seedMainSessionRow(childSessionKey, {
+        sessionId: "old-run",
+        updatedAt: now - 8 * 24 * 60 * 60_000,
+      });
 
       const runtime = createRuntime();
       await tasksMaintenanceCommand({ json: true, apply: true }, runtime);
@@ -242,7 +225,6 @@ describe("tasks commands", () => {
       const payload = readFirstJsonLog(runtime) as {
         maintenance: {
           tasks: { reconciled: number };
-          sessions: { pruned: number };
         };
         diagnostics: {
           staleRunningTasks: Array<{
@@ -255,7 +237,6 @@ describe("tasks commands", () => {
       };
 
       expect(payload.maintenance.tasks.reconciled).toBe(0);
-      expect(payload.maintenance.sessions.pruned).toBe(1);
       expect(payload.diagnostics.staleRunningTasks).toContainEqual(
         expect.objectContaining({
           taskId: task.taskId,
@@ -264,9 +245,6 @@ describe("tasks commands", () => {
           childSessionKey,
         }),
       );
-
-      const updated = JSON.parse(await fs.readFile(storePath, "utf8")) as Record<string, unknown>;
-      expect(updated[childSessionKey]).toBeUndefined();
     });
   });
 

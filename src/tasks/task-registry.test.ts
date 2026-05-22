@@ -1089,7 +1089,7 @@ describe("task-registry", () => {
         });
         expect(hoisted.sendMessageMock).not.toHaveBeenCalled();
         expect(peekSystemEvents(ownerKey)).toEqual([
-          "Background task done: ACP background task (run run-grou).",
+          "Background task ready for review: ACP background task (run run-grou). Next: parent will review/verify before calling it done.",
         ]);
         expect(hasPendingHeartbeatWake()).toBe(true);
       });

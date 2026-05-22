@@ -29,6 +29,16 @@ vi.mock("../../config/sessions/group.js", () => ({
 
 const storeRuntimeLoads = vi.hoisted(() => vi.fn());
 const upsertSessionEntry = vi.hoisted(() => vi.fn());
+const systemEventsMocks = vi.hoisted(() => {
+  const drainFormattedSystemEvents = vi.fn().mockResolvedValue(undefined);
+  return {
+    drainFormattedSystemEventBlock: vi.fn(async (...args: unknown[]) => {
+      const text = await drainFormattedSystemEvents(...args);
+      return text ? { text, forceSenderIsOwnerFalse: false } : undefined;
+    }),
+    drainFormattedSystemEvents,
+  };
+});
 
 vi.mock("../../config/sessions/store.runtime.js", () => {
   storeRuntimeLoads();
@@ -115,7 +125,8 @@ vi.mock("./session-updates.runtime.js", () => ({
 }));
 
 vi.mock("./session-system-events.js", () => ({
-  drainFormattedSystemEvents: vi.fn().mockResolvedValue(undefined),
+  drainFormattedSystemEventBlock: systemEventsMocks.drainFormattedSystemEventBlock,
+  drainFormattedSystemEvents: systemEventsMocks.drainFormattedSystemEvents,
 }));
 
 vi.mock("./typing-mode.js", () => ({

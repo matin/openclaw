@@ -68,8 +68,10 @@ describe("exportTrajectoryCommand", () => {
     );
 
     expect(mocks.resolveDefaultSessionStorePath).not.toHaveBeenCalled();
-    expect(mocks.loadSessionStore).toHaveBeenCalledWith("/tmp/direct-store.json", {
-      skipCache: true,
+    expect(mocks.loadSessionStore).not.toHaveBeenCalled();
+    expect(mocks.getSessionEntry).toHaveBeenCalledWith({
+      agentId: "main",
+      sessionKey: "agent:main:telegram:direct:123",
     });
     expect(runtime.error).toHaveBeenCalledWith(
       "Session not found: agent:main:telegram:direct:123. Run openclaw sessions to see available sessions.",

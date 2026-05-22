@@ -742,7 +742,7 @@ describe("abort detection", () => {
   it("fast-abort from an ACP-bound source conversation aborts source and bound ACP lanes", async () => {
     const sourceSessionKey = "agent:main:telegram:direct:source-1";
     const acpSessionKey = "agent:codex:acp:bound-source-stop";
-    const { root, storePath, cfg } = await createAbortConfig({
+    const { root, cfg } = await createAbortConfig({
       sessionIdsByKey: {
         [sourceSessionKey]: "source-store-session",
         [acpSessionKey]: "acp-store-session",
@@ -810,13 +810,7 @@ describe("abort detection", () => {
       sessionKey: acpSessionKey,
       reason: "fast-abort",
     });
-    const store = JSON.parse(await fs.readFile(storePath, "utf8")) as Record<
-      string,
-      {
-        abortCutoffMessageSid?: string;
-        abortCutoffTimestamp?: number;
-      }
-    >;
+    const store = readSessionRows();
     expect(store[sourceSessionKey]?.abortCutoffMessageSid).toBe("77");
     expect(store[sourceSessionKey]?.abortCutoffTimestamp).toBe(1234567890000);
     expect(store[acpSessionKey]?.abortCutoffMessageSid).toBeUndefined();
@@ -854,7 +848,7 @@ describe("abort detection", () => {
   it("persists abort cutoff metadata when only ParentSessionKey identifies the command session", async () => {
     const sessionKey = "telegram:parent-only";
     const sessionId = "session-parent-only";
-    const { storePath, cfg } = await createAbortConfig({
+    const { cfg } = await createAbortConfig({
       sessionIdsByKey: { [sessionKey]: sessionId },
     });
 
@@ -868,7 +862,7 @@ describe("abort detection", () => {
     });
 
     expect(result.handled).toBe(true);
-    const store = JSON.parse(await fs.readFile(storePath, "utf8")) as Record<string, unknown>;
+    const store = readSessionRows();
     const entry = store[sessionKey] as {
       abortedLastRun?: boolean;
       abortCutoffMessageSid?: string;

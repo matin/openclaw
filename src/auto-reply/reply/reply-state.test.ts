@@ -531,17 +531,16 @@ describe("incrementCompactionCount", () => {
       outputTokens: 10_000,
       totalTokensFresh: true,
     } as SessionEntry;
-    const { storePath, sessionKey, sessionStore } = await createCompactionSessionFixture(entry);
+    const { sessionKey, sessionStore } = await createCompactionSessionFixture(entry);
 
     await incrementCompactionCount({
       sessionEntry: entry,
       sessionStore,
       sessionKey,
-      storePath,
       tokensAfter: 0,
     });
 
-    const stored = JSON.parse(await fs.readFile(storePath, "utf-8"));
+    const stored = readStoredMainAgentSessionRows();
     expect(stored[sessionKey].compactionCount).toBe(1);
     expect(stored[sessionKey].totalTokens).toBe(0);
     expect(stored[sessionKey].totalTokensFresh).toBe(true);
@@ -583,13 +582,12 @@ describe("incrementCompactionCount", () => {
       compactionCount: 0,
       totalTokens: 180_000,
     } as SessionEntry;
-    const { storePath, sessionKey, sessionStore } = await createCompactionSessionFixture(entry);
+    const { sessionKey, sessionStore } = await createCompactionSessionFixture(entry);
 
     await incrementRunCompactionCount({
       sessionEntry: entry,
       sessionStore,
       sessionKey,
-      storePath,
       compactionTokensAfter: 0,
       lastCallUsage: {
         input: 90_000,
@@ -599,7 +597,7 @@ describe("incrementCompactionCount", () => {
       contextTokensUsed: 200_000,
     });
 
-    const stored = JSON.parse(await fs.readFile(storePath, "utf-8"));
+    const stored = readStoredMainAgentSessionRows();
     expect(stored[sessionKey].totalTokens).toBe(0);
     expect(stored[sessionKey].totalTokensFresh).toBe(true);
   });
