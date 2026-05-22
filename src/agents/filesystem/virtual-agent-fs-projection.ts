@@ -89,14 +89,23 @@ export async function createVirtualAgentFsProjection(
   }
 
   const syncBack = async () => {
-    const previousPaths = new Set(
-      vfs
-        .list("/", { recursive: true })
-        .map((entry) => entry.path)
-        .filter((entryPath) => entryPath !== "/"),
-    );
+    const previousEntries = vfs
+      .list("/", { recursive: true })
+      .filter((entry) => entry.path !== "/");
     const projectedEntries = await walkProjectedFiles(root);
-    const currentPaths = new Set(projectedEntries.map((entry) => entry.vfsPath));
+    const projectedByPath = new Map(projectedEntries.map((entry) => [entry.vfsPath, entry]));
+    const stalePaths = new Set<string>(
+      previousEntries
+        .filter((entry) => {
+          const projected = projectedByPath.get(entry.path);
+          return !projected || projected.kind !== entry.kind;
+        })
+        .map((entry) => entry.path),
+    );
+
+    for (const stalePath of [...stalePaths].toSorted((left, right) => right.length - left.length)) {
+      vfs.remove(stalePath, { recursive: true });
+    }
 
     for (const entry of projectedEntries) {
       if (entry.kind === "directory") {
@@ -104,12 +113,6 @@ export async function createVirtualAgentFsProjection(
       } else {
         vfs.writeFile(entry.vfsPath, await hostFs.readFile(entry.hostPath));
       }
-    }
-
-    for (const removedPath of [...previousPaths]
-      .filter((entryPath) => !currentPaths.has(entryPath))
-      .toSorted((left, right) => right.length - left.length)) {
-      vfs.remove(removedPath, { recursive: true });
     }
   };
 

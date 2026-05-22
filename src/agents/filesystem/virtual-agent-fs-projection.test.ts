@@ -68,4 +68,50 @@ describe("createVirtualAgentFsProjection", () => {
 
     expect(scratch.readFile("/nested/work/out.txt").toString("utf8")).toBe("from command");
   });
+
+  it("syncs directory-to-file replacements back", async () => {
+    const scratch = createSqliteVirtualAgentFs({
+      agentId: "main",
+      namespace: "scratch",
+      path: createTempDbPath(),
+      now: () => 1000,
+    });
+    scratch.writeFile("/target/old.txt", "old");
+
+    const projection = await createVirtualAgentFsProjection(scratch);
+    try {
+      await fsp.rm(path.join(projection.root, "target"), { recursive: true, force: true });
+      await fsp.writeFile(path.join(projection.root, "target"), "replacement");
+      await projection.syncBack();
+    } finally {
+      await projection.cleanup();
+    }
+
+    expect(scratch.stat("/target")?.kind).toBe("file");
+    expect(scratch.readFile("/target").toString("utf8")).toBe("replacement");
+    expect(scratch.stat("/target/old.txt")).toBeNull();
+  });
+
+  it("syncs file-to-directory replacements back", async () => {
+    const scratch = createSqliteVirtualAgentFs({
+      agentId: "main",
+      namespace: "scratch",
+      path: createTempDbPath(),
+      now: () => 1000,
+    });
+    scratch.writeFile("/target", "old");
+
+    const projection = await createVirtualAgentFsProjection(scratch);
+    try {
+      await fsp.rm(path.join(projection.root, "target"), { force: true });
+      await fsp.mkdir(path.join(projection.root, "target"));
+      await fsp.writeFile(path.join(projection.root, "target", "new.txt"), "new");
+      await projection.syncBack();
+    } finally {
+      await projection.cleanup();
+    }
+
+    expect(scratch.stat("/target")?.kind).toBe("directory");
+    expect(scratch.readFile("/target/new.txt").toString("utf8")).toBe("new");
+  });
 });
