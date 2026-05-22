@@ -20,7 +20,7 @@ Produce and review technical documentation that is clear, actionable, and mainta
 - Running full-repo documentation audits that must include both governance files and product docs surfaces (`docs/`, `README*`, `.md/.mdx/.mdc`, Fern/Sphinx/Mintlify-style sources).
 - Updating or reviewing AGENTS.md and/or CONTRIBUTING.md to keep agent and contributor workflows aligned with current repo practices.
 - Improving repository onboarding/docs that include contribution instructions, issue templates, PR flow, and review gates.
-- Designing governance documentation strategy for repos with alias instruction files (for example `CLAUDE.md`, `AGENT.md`, `.cursorrules`, `.cursor/rules/*`, `.agent/`, `.agents/`, `.pi/`) where `CLAUDE.md` is treated as a canonical policy source and `AGENTS.md` should be kept as compatibility alias if present.
+- Designing governance documentation strategy for repos with alias instruction files (for example `CLAUDE.md`, `AGENT.md`, `.cursorrules`, `.cursor/rules/*`, `.agent/`, `.agents/`, `.pi/`) where `AGENTS.md` is treated as canonical when present and aliases should be kept as compatibility surfaces.
 - Diagnosing agent-file drift where teams had to prompt iteratively to surface missing files, broken commands, or policy conflicts.
 - Applying repository-specific documentation overlays, including OpenClaw page-type, docs IA, preservation, and validation rules when present.
 
