@@ -170,7 +170,7 @@ describe("resolveSessionKeyForRun", () => {
       databasePath: "(multiple)",
       entries: {
         "agent:main:first": { sessionId: "run-ambiguous", updatedAt: 100 },
-        "agent:retired:second": { sessionId: "run-ambiguous", updatedAt: 100 },
+        "agent:main:second": { sessionId: "run-ambiguous", updatedAt: 100 },
       },
     });
 

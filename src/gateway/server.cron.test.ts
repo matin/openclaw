@@ -5,7 +5,7 @@ import { setImmediate as setImmediatePromise } from "node:timers/promises";
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import type WebSocket from "ws";
 import { resetConfigRuntimeState } from "../config/config.js";
-import { resolveCronStoreKey, saveCronStore } from "../cron/store.js";
+import { loadCronStore, resolveCronStoreKey, saveCronStore } from "../cron/store.js";
 import type { CronStoreSnapshot } from "../cron/types.js";
 import type { GuardedFetchOptions } from "../infra/net/fetch-guard.js";
 import { peekSystemEvents } from "../infra/system-events.js";
@@ -530,48 +530,41 @@ describe("gateway server cron", () => {
     }
   });
 
-  test("cron.add preserves legacy top-level array stores (#60799)", async () => {
+  test("cron.add preserves existing SQLite jobs", async () => {
     const { prevSkipCron } = await setupCronTestRun({
-      tempPrefix: "openclaw-gw-cron-legacy-array-",
+      tempPrefix: "openclaw-gw-cron-existing-jobs-",
       cronEnabled: false,
     });
-    const storePath = testState.cronStorePath;
-    expect(typeof storePath).toBe("string");
     const now = Date.parse("2026-05-20T08:00:00.000Z");
-    await fs.writeFile(
-      storePath as string,
-      JSON.stringify(
-        [
-          {
-            id: "gw-legacy-alpha",
-            name: "gateway legacy alpha",
-            enabled: true,
-            createdAtMs: now - 120_000,
-            updatedAtMs: now - 120_000,
-            schedule: { kind: "every", everyMs: 3_600_000 },
-            sessionTarget: "main",
-            wakeMode: "next-heartbeat",
-            payload: { kind: "systemEvent", text: "alpha" },
-            state: { nextRunAtMs: now + 3_600_000 },
-          },
-          {
-            id: "gw-legacy-beta",
-            name: "gateway legacy beta",
-            enabled: true,
-            createdAtMs: now - 60_000,
-            updatedAtMs: now - 60_000,
-            schedule: { kind: "every", everyMs: 7_200_000 },
-            sessionTarget: "main",
-            wakeMode: "next-heartbeat",
-            payload: { kind: "systemEvent", text: "beta" },
-            state: { nextRunAtMs: now + 7_200_000 },
-          },
-        ],
-        null,
-        2,
-      ),
-      "utf-8",
-    );
+    await saveCronStore(resolveCronStoreKey(), {
+      version: 1,
+      jobs: [
+        {
+          id: "gw-sqlite-alpha",
+          name: "gateway sqlite alpha",
+          enabled: true,
+          createdAtMs: now - 120_000,
+          updatedAtMs: now - 120_000,
+          schedule: { kind: "every", everyMs: 3_600_000 },
+          sessionTarget: "main",
+          wakeMode: "next-heartbeat",
+          payload: { kind: "systemEvent", text: "alpha" },
+          state: { nextRunAtMs: now + 3_600_000 },
+        },
+        {
+          id: "gw-sqlite-beta",
+          name: "gateway sqlite beta",
+          enabled: true,
+          createdAtMs: now - 60_000,
+          updatedAtMs: now - 60_000,
+          schedule: { kind: "every", everyMs: 7_200_000 },
+          sessionTarget: "main",
+          wakeMode: "next-heartbeat",
+          payload: { kind: "systemEvent", text: "beta" },
+          state: { nextRunAtMs: now + 7_200_000 },
+        },
+      ],
+    });
     const cronState = await createDirectCronState();
 
     try {
@@ -585,14 +578,11 @@ describe("gateway server cron", () => {
       });
       const newJobId = expectCronJobIdFromResponse(addRes);
 
-      const persisted = JSON.parse(await fs.readFile(storePath as string, "utf-8")) as {
-        version?: unknown;
-        jobs?: Array<Record<string, unknown>>;
-      };
+      const persisted = await loadCronStore(resolveCronStoreKey());
       expect(persisted.version).toBe(1);
-      expect(persisted.jobs?.map((job) => job.id)).toEqual([
-        "gw-legacy-alpha",
-        "gw-legacy-beta",
+      expect(persisted.jobs.map((job) => job.id)).toEqual([
+        "gw-sqlite-alpha",
+        "gw-sqlite-beta",
         newJobId,
       ]);
 
@@ -601,7 +591,7 @@ describe("gateway server cron", () => {
       const listedJobs = (listRes.payload as { jobs?: Array<Record<string, unknown>> } | null)
         ?.jobs;
       expect(listedJobs?.map((job) => job.id)).toEqual(
-        expect.arrayContaining(["gw-legacy-alpha", "gw-legacy-beta", newJobId]),
+        expect.arrayContaining(["gw-sqlite-alpha", "gw-sqlite-beta", newJobId]),
       );
       expect(listedJobs).toHaveLength(3);
     } finally {

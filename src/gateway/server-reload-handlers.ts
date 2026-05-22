@@ -12,7 +12,6 @@ import {
 import { getTotalPendingReplies } from "../auto-reply/reply/dispatcher-registry.js";
 import type { CliDeps } from "../cli/deps.types.js";
 import { isRestartEnabled } from "../config/commands.flags.js";
-import { getRuntimeConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { formatErrorMessage } from "../infra/errors.js";
@@ -241,7 +240,7 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
   const collectActiveRestartSessionIds = () => {
     return new Set<string>(listActiveEmbeddedRunSessionIds());
   };
-  const markActiveMainSessionsForRestart = async (nextConfig: OpenClawConfig, reason: string) => {
+  const markActiveMainSessionsForRestart = async (reason: string) => {
     const sessionKeys = collectActiveRestartSessionKeys();
     const sessionIds = collectActiveRestartSessionIds();
     if (sessionKeys.size === 0 && sessionIds.size === 0) {
@@ -250,8 +249,6 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
     const { markRestartAbortedMainSessions } =
       await import("../agents/main-session-restart-recovery.js");
     await markRestartAbortedMainSessions({
-      cfg: nextConfig,
-      additionalCfgs: [getRuntimeConfig()],
       sessionKeys,
       sessionIds,
       reason,
@@ -552,8 +549,7 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
           nextConfig.gateway?.reload?.deferralTimeoutMs,
         ),
         emitHooks: {
-          beforeEmit: () =>
-            markActiveMainSessionsForRestart(nextConfig, "config reload forced restart"),
+          beforeEmit: () => markActiveMainSessionsForRestart("config reload forced restart"),
         },
         hooks: {
           onReady: () => {

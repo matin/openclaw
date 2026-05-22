@@ -11,7 +11,6 @@ import {
   resolveAgentIdFromSessionKey,
   upsertSessionEntry,
 } from "../config/sessions.js";
-import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { callGateway } from "../gateway/call.js";
 import { readSessionMessagesAsync } from "../gateway/session-transcript-readers.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -107,8 +106,6 @@ function buildResumeMessage(pendingFinalDeliveryText?: string | null): string {
 }
 
 export async function markRestartAbortedMainSessions(params: {
-  cfg?: OpenClawConfig;
-  additionalCfgs?: Iterable<OpenClawConfig | undefined>;
   stateDir?: string;
   sessionKeys?: Iterable<string>;
   sessionIds?: Iterable<string>;
