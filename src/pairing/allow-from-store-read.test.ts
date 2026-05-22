@@ -12,13 +12,11 @@ import {
   readChannelAllowFromStoreEntriesSync,
 } from "./allow-from-store-read.js";
 import { resolveAllowFromAccountId } from "./pairing-store-keys.js";
-import {
-  readChannelPairingStateSnapshot,
-  writeChannelPairingStateSnapshot,
-} from "./pairing-store.js";
+import { writeChannelPairingStateSnapshot } from "./pairing-store.js";
 
 let fixtureRoot = "";
 let caseId = 0;
+const sqliteAllowFromByCase = new Map<string, Record<string, string[]>>();
 
 function makeEnv(homeDir: string): NodeJS.ProcessEnv {
   return {
@@ -40,10 +38,17 @@ function writeAllowFromStore(params: {
   accountId?: string;
   allowFrom: string[];
 }): void {
-  const state = readChannelPairingStateSnapshot(params.channel, params.env);
-  state.allowFrom ??= {};
-  state.allowFrom[resolveAllowFromAccountId(params.accountId)] = params.allowFrom;
-  writeChannelPairingStateSnapshot(params.channel, state, params.env);
+  const stateKey = `${params.env.OPENCLAW_STATE_DIR ?? ""}\0${params.channel}`;
+  const allowFrom = {
+    ...sqliteAllowFromByCase.get(stateKey),
+    [resolveAllowFromAccountId(params.accountId)]: params.allowFrom,
+  };
+  sqliteAllowFromByCase.set(stateKey, allowFrom);
+  writeChannelPairingStateSnapshot(
+    params.channel,
+    { version: 1, requests: [], allowFrom },
+    params.env,
+  );
 }
 
 function writeLegacyAllowFromStore(params: {
@@ -75,6 +80,7 @@ afterAll(() => {
 
 afterEach(() => {
   clearAllowFromStoreReadCacheForTest();
+  sqliteAllowFromByCase.clear();
 });
 
 describe("allow-from-store-read", () => {
