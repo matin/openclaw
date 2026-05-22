@@ -29,6 +29,12 @@ export function resolveCompletionChatType(params: {
   if (requesterOriginChatType) {
     return requesterOriginChatType;
   }
+  const sessionKeyChatType = inferCompletionChatTypeFromSessionKey(
+    params.targetRequesterSessionKey ?? params.requesterSessionKey,
+  );
+  if (sessionKeyChatType !== "unknown") {
+    return sessionKeyChatType;
+  }
 
   return inferCompletionChatTypeFromTarget(
     params.directOrigin?.to ?? params.requesterSessionOrigin?.to,
@@ -84,6 +90,29 @@ function inferCompletionChatTypeFromTarget(to: string | undefined): CompletionCh
     normalized.startsWith("dm:") ||
     normalized.startsWith("direct:") ||
     normalized.startsWith("user:")
+  ) {
+    return "direct";
+  }
+  return "unknown";
+}
+
+function inferCompletionChatTypeFromSessionKey(
+  sessionKey: string | undefined | null,
+): CompletionChatType {
+  const normalized = sessionKey?.trim().toLowerCase();
+  if (!normalized) {
+    return "unknown";
+  }
+  if (normalized.includes(":group:")) {
+    return "group";
+  }
+  if (normalized.includes(":channel:") || normalized.includes(":thread:")) {
+    return "channel";
+  }
+  if (
+    normalized.includes(":dm:") ||
+    normalized.includes(":direct:") ||
+    normalized.includes(":user:")
   ) {
     return "direct";
   }

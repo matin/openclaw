@@ -27,6 +27,7 @@ import { shouldSuppressManagedWebSearchTool } from "./codex-native-web-search.js
 import type { AgentFilesystem, AgentToolArtifactStore } from "./filesystem/agent-filesystem.js";
 import { createVirtualAgentFsProjection } from "./filesystem/virtual-agent-fs-projection.js";
 import { resolveImageSanitizationLimits } from "./image-sanitization.js";
+import { filterLocalModelLeanTools } from "./local-model-lean.js";
 import type { ModelAuthMode } from "./model-auth.js";
 import { resolveOpenClawPluginToolsForOptions } from "./openclaw-plugin-tools.js";
 import { createOpenClawTools } from "./openclaw-tools.js";
@@ -289,10 +290,12 @@ function applyModelProviderToolPolicy(
     suppressManagedWebSearch?: boolean;
   },
 ): AnyAgentTool[] {
-  if (params?.config?.agents?.defaults?.experimental?.localModelLean === true) {
-    const leanDeny = new Set(["browser", "cron", "message"]);
-    tools = tools.filter((tool) => !leanDeny.has(tool.name));
-  }
+  tools = filterLocalModelLeanTools({
+    tools,
+    config: params?.config,
+    agentId: params?.agentId,
+    sessionKey: params?.sessionKey,
+  });
 
   if (
     params?.suppressManagedWebSearch !== false &&

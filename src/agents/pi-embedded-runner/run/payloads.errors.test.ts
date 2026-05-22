@@ -344,7 +344,7 @@ describe("buildEmbeddedRunPayloads", () => {
     });
   });
 
-  it("adds tool error fallback when the assistant only invoked tools and verbose mode is on", () => {
+  it("adds tool error fallback when the assistant only invoked tools and verbose mode is full", () => {
     const payloads = buildPayloads({
       lastAssistant: makeAssistant({
         stopReason: "toolUse",
@@ -359,7 +359,7 @@ describe("buildEmbeddedRunPayloads", () => {
         ],
       }),
       lastToolError: { toolName: "exec", error: "Command exited with code 1" },
-      verboseLevel: "on",
+      verboseLevel: "full",
     });
 
     expectSingleToolErrorPayload(payloads, {
@@ -587,10 +587,10 @@ describe("buildEmbeddedRunPayloads", () => {
     expectSinglePayloadSummary(payloads, { text: warningText ?? "" });
   });
 
-  it("includes non-recoverable tool error details when verbose mode is on", () => {
+  it("includes non-recoverable tool error details when verbose mode is full", () => {
     const payloads = buildPayloads({
       lastToolError: { toolName: "browser", error: "connection timeout" },
-      verboseLevel: "on",
+      verboseLevel: "full",
     });
 
     expectSingleToolErrorPayload(payloads, {
