@@ -197,8 +197,17 @@ export function resolveHeartbeatDeliveryTarget(params: {
     });
   }
 
-  const sessionChatTypeHint =
-    target === "last" && !heartbeat?.to ? normalizeChatType(entry?.chatType) : undefined;
+  const sessionChatTypeHint = !heartbeat?.to
+    ? ((resolvedTarget.channel && resolvedTarget.lastTo
+        ? inferChatTypeFromTarget({
+            channel: resolvedTarget.channel,
+            to: resolvedTarget.lastTo,
+          })
+        : undefined) ??
+      normalizeChatType(entry?.chatType) ??
+      normalizeChatType(params.deliveryContext?.chatType) ??
+      normalizeChatType(entry?.deliveryContext?.chatType))
+    : undefined;
   const deliveryChatType = resolveHeartbeatDeliveryChatType({
     channel: resolvedTarget.channel,
     to: resolved.to,

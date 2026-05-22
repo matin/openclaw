@@ -35,18 +35,17 @@ vi.mock("../gateway/call.js", () => ({
   isGatewayTransportError: gatewayMocks.isGatewayTransportError,
 }));
 
-vi.mock("../infra/fs-safe.js", () => ({
-  movePathToTrash: fsSafeMocks.movePathToTrash,
-}));
+vi.mock("../infra/fs-safe.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../infra/fs-safe.js")>();
+  return {
+    ...actual,
+    movePathToTrash: fsSafeMocks.movePathToTrash,
+  };
+});
 
 vi.mock("../process/exec.js", () => ({
   runCommandWithTimeout: processMocks.runCommandWithTimeout,
 }));
-
-vi.mock("../infra/fs-safe.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../infra/fs-safe.js")>();
-  return { ...actual };
-});
 
 import { agentsDeleteCommand } from "./agents.commands.delete.js";
 
@@ -392,8 +391,9 @@ describe("agents delete command", () => {
 
       await agentsDeleteCommand({ id: "ops", force: true, json: true }, runtime);
 
-      expect(fsSafeMocks.movePathToTrash).toHaveBeenCalledWith(opsWorkspace, {
-        allowedRoots: [path.dirname(opsWorkspace)],
+      const resolvedOpsWorkspace = await fs.realpath(opsWorkspace);
+      expect(fsSafeMocks.movePathToTrash).toHaveBeenCalledWith(resolvedOpsWorkspace, {
+        allowedRoots: [path.dirname(resolvedOpsWorkspace)],
       });
       expect(processMocks.runCommandWithTimeout).not.toHaveBeenCalled();
     });
