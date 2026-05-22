@@ -14,6 +14,8 @@ import { readCodexAppServerBinding, writeCodexAppServerBinding } from "./session
 
 let tempDir: string;
 let codexAppServerClientFactoryForTest: CodexAppServerClientFactory | undefined;
+const testSessionKey = "agent:main:session-1";
+const testSessionId = "session-1";
 
 type MaybeCompactOptions = NonNullable<Parameters<typeof maybeCompactCodexAppServerSessionImpl>[1]>;
 
@@ -37,30 +39,33 @@ function maybeCompactCodexAppServerSession(
 }
 
 async function writeTestBinding(options: { authProfileId?: string } = {}): Promise<string> {
-  const sessionFile = path.join(tempDir, "session.jsonl");
-  await writeCodexAppServerBinding(sessionFile, {
-    threadId: "thread-1",
-    cwd: tempDir,
-    ...options,
-  });
-  return sessionFile;
+  await writeCodexAppServerBinding(
+    {
+      sessionKey: testSessionKey,
+      sessionId: testSessionId,
+    },
+    {
+      threadId: "thread-1",
+      cwd: tempDir,
+      ...options,
+    },
+  );
+  return testSessionId;
 }
 
-function startCompaction(sessionFile: string, options: { currentTokenCount?: number } = {}) {
+function startCompaction(sessionId: string, options: { currentTokenCount?: number } = {}) {
   return maybeCompactCodexAppServerSession({
-    sessionId: "session-1",
-    sessionKey: "agent:main:session-1",
-    sessionFile,
+    sessionId,
+    sessionKey: testSessionKey,
     workspaceDir: tempDir,
     ...options,
   });
 }
 
-function startSandboxedCompaction(sessionFile: string) {
+function startSandboxedCompaction(sessionId: string) {
   return maybeCompactCodexAppServerSession({
-    sessionId: "session-1",
-    sessionKey: "agent:main:session-1",
-    sessionFile,
+    sessionId,
+    sessionKey: testSessionKey,
     workspaceDir: tempDir,
     config: { agents: { defaults: { sandbox: { mode: "all" } } } },
   });
@@ -323,10 +328,8 @@ describe("maybeCompactCodexAppServerSession", () => {
   });
 
   it("reports missing thread bindings as failed native compaction", async () => {
-    const sessionFile = path.join(tempDir, "missing-binding.jsonl");
-
     const result = requireCompactResult(
-      await startCompaction(sessionFile, { currentTokenCount: 123 }),
+      await startCompaction("missing-binding", { currentTokenCount: 123 }),
     );
 
     expect(result.ok).toBe(false);
@@ -665,17 +668,18 @@ describe("maybeCompactCodexAppServerSession", () => {
     const fake = createFakeCodexClient();
     const factory = vi.fn(async () => fake.client);
     setCodexAppServerClientFactoryForTest(factory);
-    const sessionFile = path.join(tempDir, "session.jsonl");
-    await writeCodexAppServerBinding(sessionFile, {
-      threadId: "thread-1",
-      cwd: tempDir,
-      authProfileId: "openai-codex:binding",
-    });
+    await writeCodexAppServerBinding(
+      { sessionKey: testSessionKey, sessionId: testSessionId },
+      {
+        threadId: "thread-1",
+        cwd: tempDir,
+        authProfileId: "openai-codex:binding",
+      },
+    );
 
     const result = await maybeCompactCodexAppServerSession({
-      sessionId: "session-1",
-      sessionKey: "agent:main:session-1",
-      sessionFile,
+      sessionId: testSessionId,
+      sessionKey: testSessionKey,
       workspaceDir: tempDir,
       authProfileId: "openai-codex:runtime",
     });
@@ -743,7 +747,7 @@ describe("maybeCompactCodexAppServerSession", () => {
       expect.objectContaining({
         sessionId: "session-1",
         sessionKey: "agent:main:session-1",
-        sessionFile,
+        transcriptScope: { agentId: "main", sessionId: "session-1" },
         tokenBudget: 777,
         currentTokenCount: 123,
         compactionTarget: "threshold",
@@ -759,13 +763,11 @@ describe("maybeCompactCodexAppServerSession", () => {
       | {
           sessionId?: string;
           sessionKey?: string;
-          sessionFile?: string;
           runtimeContext?: { workspaceDir?: string; provider?: string };
         }
       | undefined;
     expect(maintainParams?.sessionId).toBe("session-1");
     expect(maintainParams?.sessionKey).toBe("agent:main:session-1");
-    expect(maintainParams?.sessionFile).toBe(sessionFile);
     expect(maintainParams?.runtimeContext?.workspaceDir).toBe(tempDir);
     expect(maintainParams?.runtimeContext?.provider).toBe("codex");
     expect(info).toHaveBeenCalledWith(
@@ -846,13 +848,8 @@ describe("maybeCompactCodexAppServerSession", () => {
     );
   });
 
-  it("adopts successor transcript handles after owning context-engine compaction", async () => {
+  it("adopts successor session id after owning context-engine compaction", async () => {
     const sessionFile = await writeTestBinding();
-    const successorFile = path.join(tempDir, "session.compacted.jsonl");
-    await writeCodexAppServerBinding(successorFile, {
-      threadId: "thread-successor",
-      cwd: tempDir,
-    });
     const compact = vi.fn(async () => ({
       ok: true,
       compacted: true,
@@ -861,7 +858,6 @@ describe("maybeCompactCodexAppServerSession", () => {
         firstKeptEntryId: "entry-1",
         tokensBefore: 55,
         sessionId: "session-1-compacted",
-        sessionFile: successorFile,
       },
     }));
     const maintain = vi.fn(
@@ -892,19 +888,15 @@ describe("maybeCompactCodexAppServerSession", () => {
     expect(result.ok).toBe(true);
     expect(result.compacted).toBe(true);
     expect(result.result?.sessionId).toBe("session-1-compacted");
-    expect(result.result?.sessionFile).toBe(successorFile);
     expect(await readCodexAppServerBinding(sessionFile)).toBeUndefined();
-    expect(await readCodexAppServerBinding(successorFile)).toBeUndefined();
     expect(maintain).toHaveBeenCalledTimes(1);
     const [maintainCall] = maintain.mock.calls[0] ?? [];
     const maintainParams = maintainCall as
       | {
           sessionId?: string;
-          sessionFile?: string;
         }
       | undefined;
     expect(maintainParams?.sessionId).toBe("session-1-compacted");
-    expect(maintainParams?.sessionFile).toBe(successorFile);
   });
 
   it("returns context-engine compaction success when maintenance fails", async () => {

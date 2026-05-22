@@ -174,7 +174,8 @@ async function resolveBackupRestoreAssets(
   return restoredAssets;
 }
 
-function resolveDatabaseSnapshotRestoreTarget(
+function resolveDatabaseSnapshotStageTarget(
+  tempDir: string,
   snapshot: { sourcePath: string },
   restoredAssets: BackupRestoreResult["restoredAssets"],
 ): string {
@@ -183,13 +184,14 @@ function resolveDatabaseSnapshotRestoreTarget(
   if (!owner) {
     throw new Error(`Backup database snapshot is outside restored assets: ${snapshot.sourcePath}`);
   }
+  const extractedAssetPath = extractedArchivePath(tempDir, owner.archivePath);
   return path.join(
-    owner.sourcePath,
+    extractedAssetPath,
     path.relative(path.resolve(owner.originalSourcePath), sourcePath),
   );
 }
 
-async function restoreDatabaseSnapshots(params: {
+async function stageDatabaseSnapshots(params: {
   tempDir: string;
   snapshots: NonNullable<
     Awaited<ReturnType<typeof verifyBackupArchive>>["manifest"]["databaseSnapshots"]
@@ -203,7 +205,11 @@ async function restoreDatabaseSnapshots(params: {
     if (params.dryRun) {
       continue;
     }
-    const targetPath = resolveDatabaseSnapshotRestoreTarget(snapshot, params.restoredAssets);
+    const targetPath = resolveDatabaseSnapshotStageTarget(
+      params.tempDir,
+      snapshot,
+      params.restoredAssets,
+    );
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
     await fs.copyFile(extractedPath, targetPath);
   }
@@ -252,6 +258,12 @@ export async function backupRestoreCommand(
     });
     const { manifest } = verified;
     const restoredAssets = await resolveBackupRestoreAssets(manifest.assets);
+    await stageDatabaseSnapshots({
+      tempDir,
+      snapshots: manifest.databaseSnapshots ?? [],
+      restoredAssets,
+      dryRun,
+    });
     for (const asset of restoredAssets) {
       const extractedPath = extractedArchivePath(tempDir, asset.archivePath);
       await fs.access(extractedPath);
@@ -263,12 +275,6 @@ export async function backupRestoreCommand(
         asset.status = "restored";
       }
     }
-    await restoreDatabaseSnapshots({
-      tempDir,
-      snapshots: manifest.databaseSnapshots ?? [],
-      restoredAssets,
-      dryRun,
-    });
 
     const result: BackupRestoreResult = {
       archivePath,

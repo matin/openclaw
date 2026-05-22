@@ -271,6 +271,38 @@ describe("backupRestoreCommand", () => {
     expect(readSqliteValue(path.join(sourceStateDir, "state", "openclaw.sqlite"))).toBe("restored");
   });
 
+  it("does not replace live state when database snapshot staging fails", async () => {
+    const sourceStateDir = path.join(tempDir, "state");
+    const restoredStateDir = path.join(tempDir, "snapshot-state");
+    const archivePath = path.join(tempDir, "backup-separate-db-fail.tar.gz");
+    await fs.mkdir(sourceStateDir, { recursive: true });
+    await fs.writeFile(path.join(sourceStateDir, "state.txt"), "current\n");
+    await createSqliteDb(path.join(sourceStateDir, "state", "openclaw.sqlite"), "current");
+    await fs.mkdir(restoredStateDir, { recursive: true });
+    await fs.writeFile(path.join(restoredStateDir, "state.txt"), "restored\n");
+    await createBackupArchiveWithSeparateDatabaseSnapshot({
+      archivePath,
+      sourceStateDir,
+      restoredStateDir,
+    });
+    vi.stubEnv("OPENCLAW_STATE_DIR", sourceStateDir);
+    const realCopyFile = fs.copyFile.bind(fs);
+    vi.spyOn(fs, "copyFile").mockImplementation(async (from, to) => {
+      if (String(from).includes("/payload/database/") && String(to).endsWith("openclaw.sqlite")) {
+        throw new Error("copy failed");
+      }
+      return await realCopyFile(from, to);
+    });
+
+    const runtime = createRuntime();
+    await expect(
+      backupRestoreCommand(runtime, { archive: archivePath, yes: true }),
+    ).rejects.toThrow("copy failed");
+
+    expect(await fs.readFile(path.join(sourceStateDir, "state.txt"), "utf8")).toBe("current\n");
+    expect(readSqliteValue(path.join(sourceStateDir, "state", "openclaw.sqlite"))).toBe("current");
+  });
+
   it("does not trust archived source paths as restore destinations", async () => {
     const currentStateDir = path.join(tempDir, "current-state");
     const archivedSourceStateDir = path.join(tempDir, "archived-machine-state");

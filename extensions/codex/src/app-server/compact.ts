@@ -59,7 +59,7 @@ export async function maybeCompactCodexAppServerSession(
         contextEngine: activeContextEngine,
         sessionId: params.sessionId,
         sessionKey: params.sessionKey,
-        sessionFile: params.sessionFile,
+        transcriptScope: buildContextEngineTranscriptScope(params),
         reason: "compaction",
         runtimeContext: params.contextEngineRuntimeContext,
         config: params.config,
@@ -103,7 +103,7 @@ async function compactOwningContextEngine(
       {
         sessionId: params.sessionId,
         sessionKey: params.sessionKey,
-        sessionFile: params.sessionFile,
+        transcriptScope: buildContextEngineTranscriptScope(params),
         tokenBudget: params.contextTokenBudget,
         currentTokenCount: params.currentTokenCount,
         compactionTarget,
@@ -130,13 +130,15 @@ async function compactOwningContextEngine(
 
   if (result.ok && result.compacted) {
     const compactedSessionId = result.result?.sessionId ?? params.sessionId;
-    const compactedSessionFile = result.result?.sessionFile ?? params.sessionFile;
     try {
       await runHarnessContextEngineMaintenance({
         contextEngine,
         sessionId: compactedSessionId,
         sessionKey: params.sessionKey,
-        sessionFile: compactedSessionFile,
+        transcriptScope: buildContextEngineTranscriptScope({
+          ...params,
+          sessionId: compactedSessionId,
+        }),
         reason: "compaction",
         runtimeContext: params.contextEngineRuntimeContext,
         config: params.config,
@@ -148,10 +150,10 @@ async function compactOwningContextEngine(
         error: formatErrorMessage(error),
       });
     }
-    await clearCodexAppServerBinding(params.sessionFile, { config: params.config });
-    if (compactedSessionFile !== params.sessionFile) {
-      await clearCodexAppServerBinding(compactedSessionFile, { config: params.config });
-    }
+    await clearCodexAppServerBinding({
+      sessionKey: params.sessionKey,
+      sessionId: params.sessionId,
+    });
   }
 
   embeddedAgentLog.info("completed context-engine-owned Codex app-server compaction", {
@@ -198,6 +200,16 @@ function mergeContextEngineCompactionDetails(
     };
   }
   return extra;
+}
+
+function buildContextEngineTranscriptScope(
+  params: Pick<CompactEmbeddedPiSessionParams, "agentId" | "path" | "sessionId">,
+): { agentId: string; path?: string; sessionId: string } {
+  return {
+    agentId: params.agentId ?? "main",
+    ...(params.path ? { path: params.path } : {}),
+    sessionId: params.sessionId,
+  };
 }
 
 function warnIfIgnoringOpenClawCompactionOverrides(params: CompactEmbeddedPiSessionParams): void {
@@ -344,7 +356,8 @@ async function compactCodexNativeThread(
     return { ok: false, compacted: false, reason: nativeExecutionBlock };
   }
   const appServer = resolveCodexAppServerRuntimeOptions({ pluginConfig: options.pluginConfig });
-  const binding = await readCodexAppServerBinding(params.sessionFile, { config: params.config });
+  const bindingIdentity = { sessionKey: params.sessionKey, sessionId: params.sessionId };
+  const binding = await readCodexAppServerBinding(bindingIdentity, { config: params.config });
   if (!binding?.threadId) {
     return failedCodexThreadBindingCompactionResult(params, {
       reason: "no codex app-server thread binding",
@@ -386,7 +399,7 @@ async function compactCodexNativeThread(
     } catch (error) {
       waiter.cancel();
       if (isCodexThreadNotFoundError(error)) {
-        await clearCodexAppServerBinding(params.sessionFile, { config: params.config });
+        await clearCodexAppServerBinding(bindingIdentity);
         return failedCodexThreadBindingCompactionResult(params, {
           threadId: binding.threadId,
           reason: formatCompactionError(error),
