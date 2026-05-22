@@ -143,12 +143,13 @@ class DeviceAuthStoreTest {
     prefs.putString("gateway.deviceToken.device-1.operator", " operator-token ")
     prefs.putString("gateway.deviceTokenMeta.device-1.operator", metadata)
 
-    val entry =
+    val store =
       DeviceAuthStore.createForTesting(
         context = app,
         legacyPrefsOverride = prefs,
         stateStoreOverride = ThrowingDeviceAuthStateStore(),
-      ).loadEntry("device-1", "operator")
+      )
+    val entry = store.loadEntry("device-1", "operator")
 
     assertEquals("operator-token", entry?.token)
     assertEquals(listOf("operator.read"), entry?.scopes)

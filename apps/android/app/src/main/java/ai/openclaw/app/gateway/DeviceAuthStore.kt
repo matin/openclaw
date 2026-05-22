@@ -217,8 +217,7 @@ class DeviceAuthStore private constructor(
         } else {
           migrateLegacyEntry(normalizedDevice, role)?.let { role to it }
         }
-      }
-      .toMap()
+      }.toMap()
   }
 
   private fun migrateLegacyEntry(
