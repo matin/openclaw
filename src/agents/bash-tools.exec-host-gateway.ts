@@ -87,6 +87,7 @@ export type ProcessGatewayAllowlistResult = {
   execCommandOverride?: string;
   allowWithoutEnforcedCommand?: boolean;
   pendingResult?: AgentToolResult<ExecToolDetails>;
+  deniedResult?: AgentToolResult<ExecToolDetails>;
 };
 
 function hasGatewayAllowlistMiss(params: {

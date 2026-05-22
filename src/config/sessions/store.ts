@@ -301,6 +301,7 @@ export async function updateLastRoute(params: {
   to?: string;
   accountId?: string;
   threadId?: string | number;
+  route?: import("../../plugin-sdk/channel-route.js").ChannelRouteRef;
   deliveryContext?: DeliveryContext;
   ctx?: MsgContext;
   groupResolution?: import("./types.js").GroupKeyResolution | null;
@@ -314,6 +315,7 @@ export async function updateLastRoute(params: {
     env: params.env,
   });
   const normalizedKey = normalizeSessionRowKey(sessionKey);
+  const routeContext = deliveryContextFromSession({ route: params.route });
   const explicitContext = normalizeDeliveryContext(params.deliveryContext);
   const inlineContext = normalizeDeliveryContext({
     channel,
@@ -321,7 +323,10 @@ export async function updateLastRoute(params: {
     accountId,
     threadId,
   });
-  const mergedInput = mergeDeliveryContext(explicitContext, inlineContext);
+  const mergedInput = mergeDeliveryContext(
+    routeContext,
+    mergeDeliveryContext(explicitContext, inlineContext),
+  );
   const explicitDeliveryContext = params.deliveryContext;
   const explicitThreadFromDeliveryContext =
     explicitDeliveryContext != null &&
@@ -345,6 +350,7 @@ export async function updateLastRoute(params: {
         : deliveryContextFromSession(existing);
       const merged = mergeDeliveryContext(mergedInput, fallbackContext);
       const normalized = normalizeSessionDeliveryFields({
+        route: params.route,
         deliveryContext: {
           channel: merged?.channel,
           to: merged?.to,
@@ -361,6 +367,7 @@ export async function updateLastRoute(params: {
           })
         : null;
       const basePatch: Partial<SessionEntry> = {
+        route: normalized.route,
         channel: normalized.deliveryContext?.channel,
         deliveryContext: normalized.deliveryContext,
         lastChannel: normalized.lastChannel,

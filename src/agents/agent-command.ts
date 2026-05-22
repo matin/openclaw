@@ -10,6 +10,7 @@ import {
 import { formatCliCommand } from "../cli/command-format.js";
 import type { CliDeps } from "../cli/deps.types.js";
 import { getRuntimeConfig } from "../config/io.js";
+import { getSessionEntry } from "../config/sessions.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import { withLocalGatewayRequestScope } from "../gateway/local-request-context.js";
 import {
@@ -1062,6 +1063,7 @@ async function agentCommandInternal(
     const startedAt = Date.now();
     const attemptLifecycleState = {
       currentTurnUserMessagePersisted: false,
+      lifecycleFinishing: false,
       lifecycleEnded: false,
     };
     const attemptLifecycleCallbacks = createAgentAttemptLifecycleCallbacks(attemptLifecycleState);
@@ -1490,12 +1492,7 @@ async function agentCommandInternal(
     const resolveFreshSessionEntryForDelivery =
       sessionStore && sessionKey
         ? async (): Promise<SessionEntry | undefined> => {
-            const { loadSessionStore } = await loadSessionStoreRuntime();
-            const freshStore = loadSessionStore(storePath, {
-              skipCache: true,
-              clone: false,
-            });
-            const freshEntry = freshStore[sessionKey];
+            const freshEntry = getSessionEntry({ agentId: sessionAgentId, sessionKey });
             if (!freshEntry || freshEntry.sessionId !== sessionId) {
               return undefined;
             }

@@ -141,27 +141,8 @@ function sanitizeTrajectoryPayload(data: Record<string, unknown>): Record<string
   >;
 }
 
-function describeTrajectoryWriterFlushState(writer: QueuedFileWriter): string | undefined {
-  const diagnostics = writer.describeQueue?.();
-  if (!diagnostics) {
-    return undefined;
-  }
-  const parts = [
-    `pendingWrites=${diagnostics.pendingWrites}`,
-    `queuedBytes=${diagnostics.queuedBytes}`,
-    `activeOperation=${diagnostics.activeOperation}`,
-    `yieldBeforeWrite=${diagnostics.yieldBeforeWrite}`,
-  ];
-  if (diagnostics.activeWriteBytes !== undefined) {
-    parts.push(`activeWriteBytes=${diagnostics.activeWriteBytes}`);
-  }
-  if (diagnostics.maxQueuedBytes !== undefined) {
-    parts.push(`maxQueuedBytes=${diagnostics.maxQueuedBytes}`);
-  }
-  if (diagnostics.maxFileBytes !== undefined) {
-    parts.push(`maxFileBytes=${diagnostics.maxFileBytes}`);
-  }
-  return parts.join(" ");
+function describeTrajectoryWriterFlushState(): string | undefined {
+  return undefined;
 }
 
 export function toTrajectoryToolDefinitions(
@@ -337,6 +318,6 @@ export function createTrajectoryRuntimeRecorder(
       }
       writeArtifactMirror();
     },
-    describeFlushState: () => describeTrajectoryWriterFlushState(writer),
+    describeFlushState: () => describeTrajectoryWriterFlushState(),
   };
 }

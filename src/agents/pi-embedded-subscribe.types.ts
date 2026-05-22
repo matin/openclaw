@@ -1,4 +1,7 @@
-import type { PartialReplyPayload } from "../auto-reply/get-reply-options.types.js";
+import type {
+  PartialReplyPayload,
+  SourceReplyDeliveryMode,
+} from "../auto-reply/get-reply-options.types.js";
 import type { ReplyPayload } from "../auto-reply/reply-payload.js";
 import type { ReasoningLevel, ThinkLevel, VerboseLevel } from "../auto-reply/thinking.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -53,6 +56,7 @@ export type SubscribeEmbeddedPiSessionParams = {
     sessionKey?: string;
   }) => void | Promise<void>;
   terminalLifecyclePhase?: "end" | "finishing";
+  sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   /** Best-effort hook invoked immediately before the terminal lifecycle event is emitted. */
   onBeforeLifecycleTerminal?: () => void | Promise<void>;
   enforceFinalTag?: boolean;

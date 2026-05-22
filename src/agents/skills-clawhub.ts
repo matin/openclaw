@@ -460,10 +460,10 @@ export async function readTrackedClawHubSkillSlugs(workspaceDir: string): Promis
 
 export async function untrackClawHubSkill(workspaceDir: string, slug: string): Promise<void> {
   const trackedSlug = normalizeTrackedSkillSlug(slug);
-  const lock = await readClawHubSkillsLockfile(workspaceDir);
-  if (!lock.skills[trackedSlug]) {
+  const tracked = await readTrackedClawHubSkills(workspaceDir);
+  if (!tracked.skills[trackedSlug]) {
     return;
   }
-  delete lock.skills[trackedSlug];
-  await writeClawHubSkillsLockfile(workspaceDir, lock);
+  delete tracked.skills[trackedSlug];
+  await writeTrackedClawHubSkills(workspaceDir, tracked);
 }

@@ -1,12 +1,14 @@
 import { readErrorName } from "../infra/errors.js";
 import {
   classifyFailoverSignal,
+  inferSignalStatus,
   isUnclassifiedNoBodyHttpSignal,
   type FailoverClassification,
   type FailoverSignal,
 } from "./pi-embedded-helpers/errors.js";
 import { isTimeoutErrorMessage } from "./pi-embedded-helpers/errors.js";
 import type { FailoverReason } from "./pi-embedded-helpers/types.js";
+import { isSessionWriteLockTimeoutError } from "./session-write-lock-error.js";
 
 const ABORT_TIMEOUT_RE = /request was aborted|request aborted/i;
 const MAX_FAILOVER_CAUSE_DEPTH = 25;
@@ -218,8 +220,65 @@ function normalizeDirectErrorSignal(err: unknown): FailoverSignal {
   };
 }
 
+function hasSessionWriteLockTimeout(err: unknown, seen: Set<object> = new Set()): boolean {
+  if (isSessionWriteLockTimeoutError(err)) {
+    return true;
+  }
+  if (!err || typeof err !== "object") {
+    return false;
+  }
+  if (seen.has(err)) {
+    return false;
+  }
+  seen.add(err);
+  const candidate = err as { error?: unknown; cause?: unknown; reason?: unknown };
+  return (
+    hasSessionWriteLockTimeout(candidate.error, seen) ||
+    hasSessionWriteLockTimeout(candidate.cause, seen) ||
+    hasSessionWriteLockTimeout(candidate.reason, seen)
+  );
+}
+
+function isEmbeddedAttemptSessionTakeover(err: unknown): boolean {
+  return Boolean(
+    err && typeof err === "object" && readErrorName(err) === "EmbeddedAttemptSessionTakeoverError",
+  );
+}
+
+function hasEmbeddedAttemptSessionTakeover(err: unknown, seen: Set<object> = new Set()): boolean {
+  if (isEmbeddedAttemptSessionTakeover(err)) {
+    return true;
+  }
+  if (!err || typeof err !== "object") {
+    return false;
+  }
+  if (seen.has(err)) {
+    return false;
+  }
+  seen.add(err);
+  const candidate = err as { error?: unknown; cause?: unknown; reason?: unknown };
+  return (
+    hasEmbeddedAttemptSessionTakeover(candidate.error, seen) ||
+    hasEmbeddedAttemptSessionTakeover(candidate.cause, seen) ||
+    hasEmbeddedAttemptSessionTakeover(candidate.reason, seen)
+  );
+}
+
+export function isNonProviderRuntimeCoordinationError(err: unknown): boolean {
+  if (!hasSessionWriteLockTimeout(err) && !hasEmbeddedAttemptSessionTakeover(err)) {
+    return false;
+  }
+  if (isFailoverError(err)) {
+    return false;
+  }
+  return resolveFailoverClassificationFromError(err) === null;
+}
+
 function hasTimeoutHint(err: unknown): boolean {
   if (!err) {
+    return false;
+  }
+  if (hasSessionWriteLockTimeout(err)) {
     return false;
   }
   if (readErrorName(err) === "TimeoutError") {
@@ -237,6 +296,9 @@ export function isTimeoutError(err: unknown): boolean {
     return false;
   }
   if (readErrorName(err) !== "AbortError") {
+    return false;
+  }
+  if (hasSessionWriteLockTimeout(err)) {
     return false;
   }
   const message = getErrorMessage(err);
@@ -338,8 +400,19 @@ function resolveFailoverClassificationFromErrorInternal(
     };
   }
   const signal = normalizeErrorSignal(err, providerHint);
+  const codeReason = signal.code
+    ? failoverReasonFromClassification(classifyFailoverSignal({ code: signal.code }))
+    : null;
+  const hasExplicitFailoverMetadata =
+    typeof inferSignalStatus(signal) === "number" ||
+    (codeReason !== null && codeReason !== "timeout");
+  const hasSessionLock = hasSessionWriteLockTimeout(err);
   const classification = classifyFailoverSignal(signal);
   const nestedCandidates = getNestedErrorCandidates(err);
+
+  if (hasSessionLock && !hasExplicitFailoverMetadata) {
+    return null;
+  }
 
   if (!classification || classification.kind === "context_overflow") {
     for (const candidate of nestedCandidates) {

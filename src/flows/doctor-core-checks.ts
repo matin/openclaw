@@ -248,7 +248,7 @@ const legacyStateCheck: HealthCheck = {
   description: "Legacy sessions, agent state, and channel auth paths have been migrated.",
   source: "doctor",
   async detect(ctx) {
-    const { detectLegacyStateMigrations } = await import("../commands/doctor-state-migrations.js");
+    const { detectLegacyStateMigrations } = await import("../commands/doctor/state-migrations.js");
     const detected = await detectLegacyStateMigrations({ cfg: ctx.cfg });
     return detected.preview.map(
       (line): HealthFinding => ({
@@ -478,7 +478,7 @@ const legacyWhatsAppCrontabCheck: HealthCheck = {
   source: "doctor",
   async detect() {
     const { collectLegacyWhatsAppCrontabHealthWarning } =
-      await import("../commands/doctor-cron.js");
+      await import("../commands/doctor/legacy/cron.js");
     const warning = await collectLegacyWhatsAppCrontabHealthWarning();
     if (!warning) {
       return [];

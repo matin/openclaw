@@ -154,10 +154,8 @@ function resolveStoredSessionId(params: {
     sessionKey: params.sessionKey,
     config: params.cfg,
   });
-  const storePath = resolveStorePath(params.cfg.session?.store, { agentId });
   try {
-    const store = loadSessionStore(storePath);
-    return resolveSessionEntryForKey(store, params.sessionKey).entry?.sessionId;
+    return getSessionEntry({ agentId, sessionKey: params.sessionKey })?.sessionId;
   } catch {
     return undefined;
   }

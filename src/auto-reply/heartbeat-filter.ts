@@ -477,3 +477,11 @@ export function filterHeartbeatTranscriptArtifacts<T extends { role: string; con
 
   return result;
 }
+
+export function filterHeartbeatPairs<T extends { role: string; content?: unknown }>(
+  messages: T[],
+  ackMaxChars?: number,
+  heartbeatPrompt?: string,
+): T[] {
+  return filterHeartbeatTranscriptArtifacts(messages, ackMaxChars, heartbeatPrompt);
+}

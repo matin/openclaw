@@ -75,6 +75,7 @@ export type RunEmbeddedPiAgentParams = {
   senderE164?: string | null;
   /** Trusted sender identity bit for command/channel-action auth. */
   senderIsOwner?: boolean;
+  ownerOnlyToolAllowlist?: string[];
   /** Current channel ID for auto-threading (Slack). */
   currentChannelId?: string;
   /** Current thread timestamp for auto-threading (Slack). */

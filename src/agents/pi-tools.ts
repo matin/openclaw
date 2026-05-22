@@ -505,6 +505,7 @@ export function createOpenClawCodingTools(options?: {
   toolConstructionPlan?: OpenClawCodingToolConstructionPlan;
   /** Trusted sender identity bit for command/channel-action auth; does not filter model tools. */
   senderIsOwner?: boolean;
+  ownerOnlyToolAllowlist?: string[];
   /** Auth profiles already loaded for this run; used for prompt-time tool availability. */
   authProfileStore?: AuthProfileStore;
   /** Callback invoked when sessions_yield tool is called. */

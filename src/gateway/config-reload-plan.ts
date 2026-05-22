@@ -30,6 +30,10 @@ type ReloadRule = {
   actions?: ReloadAction[];
 };
 
+export type ConfigReloadMetadata = {
+  kind: ReloadRule["kind"];
+};
+
 type ReloadAction =
   | "reload-hooks"
   | "restart-gmail-watcher"
@@ -224,6 +228,13 @@ function matchRule(path: string): ReloadRule | null {
 
 function isInstalledPluginIndexTimestampPath(path: string): boolean {
   return /^installedPluginIndex\.installRecords\..+\.(installedAt|resolvedAt)$/.test(path);
+}
+
+export function resolveConfigReloadMetadata(path: string): ConfigReloadMetadata {
+  if (isInstalledPluginIndexTimestampPath(path)) {
+    return { kind: "none" };
+  }
+  return { kind: matchRule(path)?.kind ?? "restart" };
 }
 
 function getInstalledPluginIndexRecords(state: unknown): Record<string, unknown> {
