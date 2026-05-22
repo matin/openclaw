@@ -1,3 +1,7 @@
+import type {
+  ExtensionContext as PiExtensionContext,
+  ExtensionUIContext as PiExtensionUIContext,
+} from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
 import type {
   AgentMessage,
@@ -74,9 +78,11 @@ export type CompactOptions = {
 
 export type ExtensionContext = {
   cwd: string;
-  sessionManager: object;
-  modelRegistry: unknown;
+  sessionManager: PiExtensionContext["sessionManager"];
+  modelRegistry: PiExtensionContext["modelRegistry"];
   model: Model<Api> | undefined;
+  ui: PiExtensionUIContext;
+  hasUI: boolean;
   isIdle(): boolean;
   signal: AbortSignal | undefined;
   abort(): void;

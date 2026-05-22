@@ -43,7 +43,6 @@ import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { callGateway } from "../gateway/call.js";
 import { formatErrorMessage } from "../infra/errors.js";
-import { resolveEventSessionRoutingPolicy } from "../infra/event-session-routing.js";
 import { areHeartbeatsEnabled } from "../infra/heartbeat-wake.js";
 import {
   getSessionBindingService,
@@ -70,7 +69,6 @@ import {
 } from "../utils/delivery-context.js";
 import {
   type AcpSpawnParentRelayHandle,
-  resolveAcpSpawnStreamLogPath,
   startAcpSpawnParentStreamRelay,
 } from "./acp-spawn-parent-stream.js";
 import { listAgentIds, resolveAgentConfig, resolveDefaultAgentId } from "./agent-scope.js";
@@ -1398,12 +1396,6 @@ export async function spawnAcpDirect(
   });
   const childIdem = crypto.randomUUID();
   let childRunId: string = childIdem;
-  const streamLogPath =
-    effectiveStreamToParent && parentSessionKey
-      ? resolveAcpSpawnStreamLogPath({
-          childSessionKey: sessionKey,
-        })
-      : undefined;
   // Resolve parent session delivery context so system events route to the
   // correct thread/topic instead of falling back to the main DM.
   const parentDeliveryCtx =
@@ -1417,9 +1409,6 @@ export async function spawnAcpDirect(
       : undefined;
 
   let parentRelay: AcpSpawnParentRelayHandle | undefined;
-  const parentEventRouting = parentSessionKey
-    ? resolveEventSessionRoutingPolicy({ cfg, sessionKey: parentSessionKey })
-    : undefined;
   if (effectiveStreamToParent && parentSessionKey) {
     // Register relay before dispatch so fast lifecycle failures are not missed.
     parentRelay = startAcpSpawnParentStreamRelay({
@@ -1427,10 +1416,6 @@ export async function spawnAcpDirect(
       parentSessionKey,
       childSessionKey: sessionKey,
       agentId: targetAgentId,
-      mainKey: cfg.session?.mainKey,
-      sessionScope: cfg.session?.scope,
-      eventRouting: parentEventRouting,
-      logPath: streamLogPath,
       deliveryContext: parentDeliveryCtx,
       emitStartNotice: false,
     });
@@ -1483,10 +1468,6 @@ export async function spawnAcpDirect(
         parentSessionKey,
         childSessionKey: sessionKey,
         agentId: targetAgentId,
-        mainKey: cfg.session?.mainKey,
-        sessionScope: cfg.session?.scope,
-        eventRouting: parentEventRouting,
-        logPath: streamLogPath,
         deliveryContext: parentDeliveryCtx,
         emitStartNotice: false,
       });

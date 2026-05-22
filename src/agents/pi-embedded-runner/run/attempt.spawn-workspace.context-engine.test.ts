@@ -1132,12 +1132,7 @@ describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
     expect(seenPrompt).toContain("Hello from the replied message");
     expect(seenPrompt).toContain("Continue the OpenClaw runtime event.");
     expect(result.finalPromptText).toBe(seenPrompt);
-    const trajectoryEvents = (
-      await fs.readFile(path.join(tempPaths[0] ?? "", "session.trajectory.jsonl"), "utf8")
-    )
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as TrajectoryEvent);
+    const trajectoryEvents = readTrajectoryEvents(result);
     const contextCompiled = trajectoryEvents.find((event) => event.type === "context.compiled");
     expect(contextCompiled?.data?.prompt).toContain("Hello from the replied message");
     expect(contextCompiled?.data?.systemPrompt).toContain("runtime bare mention event");

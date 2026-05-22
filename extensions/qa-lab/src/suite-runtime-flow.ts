@@ -3,7 +3,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { formatMemoryDreamingDay } from "openclaw/plugin-sdk/memory-core-host-status";
-import { resolveSessionTranscriptsDirForAgent } from "openclaw/plugin-sdk/memory-host-core";
 import { buildAgentSessionKey } from "openclaw/plugin-sdk/routing";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
@@ -20,8 +19,7 @@ import {
   reportsMissingDiscoveryFiles,
 } from "./discovery-eval.js";
 import { extractQaToolPayload } from "./extract-tool-payload.js";
-import { assertNoGatewayLogSentinels, scanGatewayLogSentinels } from "./gateway-log-sentinel.js";
-import { hasModelSwitchContinuitySignal } from "./model-switch-eval.js";
+import { hasModelSwitchContinuityEvidence } from "./model-switch-eval.js";
 import { qaChannelPlugin } from "./runtime-api.js";
 import { runRuntimeToolFixture } from "./runtime-tool-fixture.js";
 import type { QaSeedScenarioWithSource } from "./scenario-catalog.js";
@@ -38,8 +36,7 @@ import {
   listCronJobs,
   readDoctorMemoryStatus,
   readEffectiveTools,
-  readRawQaSessionStore,
-  readSessionTranscriptSummary,
+  readRawQaSessionEntries,
   readSkillStatus,
   resolveGeneratedImagePath,
   runAgentPrompt,
@@ -165,14 +162,7 @@ function createQaSuiteScenarioDeps(params: QaSuiteScenarioDepsParams) {
     createSession,
     readEffectiveTools,
     readSkillStatus,
-    readRawQaSessionStore,
-    readGatewayLogs: () => params.env.gateway.logs?.() ?? "",
-    markGatewayLogCursor: () => (params.env.gateway.logs?.() ?? "").length,
-    scanGatewayLogSentinels: (options?: Parameters<typeof scanGatewayLogSentinels>[1]) =>
-      scanGatewayLogSentinels(params.env.gateway.logs?.(), options),
-    assertNoGatewayLogSentinels: (options?: Parameters<typeof assertNoGatewayLogSentinels>[1]) =>
-      assertNoGatewayLogSentinels(params.env.gateway.logs?.(), options),
-    readSessionTranscriptSummary,
+    readRawQaSessionEntries,
     runQaCli,
     extractMediaPathFromText,
     resolveGeneratedImagePath,
@@ -202,7 +192,6 @@ function createQaSuiteScenarioDeps(params: QaSuiteScenarioDepsParams) {
       }),
     extractQaToolPayload,
     formatMemoryDreamingDay,
-    resolveSessionTranscriptsDirForAgent,
     buildAgentSessionKey,
     normalizeLowercaseStringOrEmpty,
     formatErrorMessage: params.formatErrorMessage,
@@ -213,7 +202,7 @@ function createQaSuiteScenarioDeps(params: QaSuiteScenarioDepsParams) {
     hasDiscoveryLabels,
     reportsDiscoveryScopeLeak,
     reportsMissingDiscoveryFiles,
-    hasModelSwitchContinuitySignal,
+    hasModelSwitchContinuityEvidence,
   };
 }
 
