@@ -265,14 +265,47 @@ jobs:
         run: |
           set -euo pipefail
 
+          gh_retry() {
+            local attempt delay max output status
+            max=8
+            delay=10
+            for attempt in $(seq 1 "$max"); do
+              set +e
+              output="$(gh "$@" 2>&1)"
+              status=$?
+              set -e
+              if [[ "$status" == "0" ]]; then
+                printf '%s\n' "$output"
+                return 0
+              fi
+              if [[ "$output" != *"HTTP 401: Bad credentials"* && "$output" != *"HTTP 5"* && "$output" != *"api.github.com"* && "$output" != *"connection reset"* && "$output" != *"i/o timeout"* ]]; then
+                printf '%s\n' "$output" >&2
+                return "$status"
+              fi
+              if (( attempt == max )); then
+                break
+              fi
+              printf 'Transient gh failure (%s/%s): %s\n' "$attempt" "$max" "$output" >&2
+              sleep "$delay"
+              if (( delay < 60 )); then
+                delay=$((delay * 2))
+                if (( delay > 60 )); then
+                  delay=60
+                fi
+              fi
+            done
+            printf '%s\n' "$output" >&2
+            return "$status"
+          }
+
           dispatch_and_wait() {
             local workflow="$1"
             shift
 
             local before_json dispatch_output run_id status conclusion url poll_count
-            before_json="$(gh run list --workflow "$workflow" --event workflow_dispatch --limit 100 --json databaseId --jq '[.[].databaseId]')"
+            before_json="$(gh_retry run list --workflow "$workflow" --event workflow_dispatch --limit 100 --json databaseId --jq '[.[].databaseId]')"
 
-            dispatch_output="$(gh workflow run "$workflow" --ref "$CHILD_WORKFLOW_REF" "$@" 2>&1)"
+            dispatch_output="$(gh_retry workflow run "$workflow" --ref "$CHILD_WORKFLOW_REF" "$@")"
             printf '%s\n' "$dispatch_output"
             run_id="$(
               printf '%s\n' "$dispatch_output" |
@@ -283,7 +316,7 @@ jobs:
             if [[ -z "$run_id" ]]; then
               for _ in $(seq 1 60); do
                 run_id="$(
-                  BEFORE_IDS="$before_json" gh run list --workflow "$workflow" --event workflow_dispatch --limit 50 --json databaseId,createdAt \
+                  BEFORE_IDS="$before_json" gh_retry run list --workflow "$workflow" --event workflow_dispatch --limit 50 --json databaseId,createdAt \
                     --jq 'map(select(.databaseId as $id | (env.BEFORE_IDS | fromjson | index($id) | not))) | sort_by(.createdAt) | reverse | .[0].databaseId // empty'
                 )"
                 if [[ -n "$run_id" ]]; then
@@ -307,30 +340,30 @@ jobs:
                 gh run cancel "$run_id" >/dev/null 2>&1 || true
               fi
             }
-            trap cancel_child EXIT INT TERM
+            trap cancel_child INT TERM
 
             poll_count=0
             while true; do
-              status="$(gh run view "$run_id" --json status --jq '.status')"
+              status="$(gh_retry run view "$run_id" --json status --jq '.status')"
               if [[ "$status" == "completed" ]]; then
                 break
               fi
               poll_count=$((poll_count + 1))
               if (( poll_count % 10 == 0 )); then
                 echo "Still waiting on ${workflow}: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
-                gh run view "$run_id" --json jobs --jq '.jobs[] | select(.status != "completed") | {name, status, url}' || true
+                gh_retry run view "$run_id" --json jobs --jq '.jobs[] | select(.status != "completed") | {name, status, url}' || true
               fi
               sleep 30
             done
-            trap - EXIT INT TERM
+            trap - INT TERM
 
-            conclusion="$(gh run view "$run_id" --json conclusion --jq '.conclusion')"
-            url="$(gh run view "$run_id" --json url --jq '.url')"
+            conclusion="$(gh_retry run view "$run_id" --json conclusion --jq '.conclusion')"
+            url="$(gh_retry run view "$run_id" --json url --jq '.url')"
             echo "${workflow} finished with ${conclusion}: ${url}"
             echo "url=${url}" >> "$GITHUB_OUTPUT"
             echo "conclusion=${conclusion}" >> "$GITHUB_OUTPUT"
             if [[ "$conclusion" != "success" ]]; then
-              gh run view "$run_id" --json jobs --jq '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | {name, conclusion, url}' || true
+              gh_retry run view "$run_id" --json jobs --jq '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | {name, conclusion, url}' || true
               exit 1
             fi
           }
@@ -365,14 +398,47 @@ jobs:
         run: |
           set -euo pipefail
 
+          gh_retry() {
+            local attempt delay max output status
+            max=8
+            delay=10
+            for attempt in $(seq 1 "$max"); do
+              set +e
+              output="$(gh "$@" 2>&1)"
+              status=$?
+              set -e
+              if [[ "$status" == "0" ]]; then
+                printf '%s\n' "$output"
+                return 0
+              fi
+              if [[ "$output" != *"HTTP 401: Bad credentials"* && "$output" != *"HTTP 5"* && "$output" != *"api.github.com"* && "$output" != *"connection reset"* && "$output" != *"i/o timeout"* ]]; then
+                printf '%s\n' "$output" >&2
+                return "$status"
+              fi
+              if (( attempt == max )); then
+                break
+              fi
+              printf 'Transient gh failure (%s/%s): %s\n' "$attempt" "$max" "$output" >&2
+              sleep "$delay"
+              if (( delay < 60 )); then
+                delay=$((delay * 2))
+                if (( delay > 60 )); then
+                  delay=60
+                fi
+              fi
+            done
+            printf '%s\n' "$output" >&2
+            return "$status"
+          }
+
           dispatch_and_wait() {
             local workflow="$1"
             shift
 
             local before_json dispatch_output run_id status conclusion url poll_count
-            before_json="$(gh run list --workflow "$workflow" --event workflow_dispatch --limit 100 --json databaseId --jq '[.[].databaseId]')"
+            before_json="$(gh_retry run list --workflow "$workflow" --event workflow_dispatch --limit 100 --json databaseId --jq '[.[].databaseId]')"
 
-            dispatch_output="$(gh workflow run "$workflow" --ref "$CHILD_WORKFLOW_REF" "$@" 2>&1)"
+            dispatch_output="$(gh_retry workflow run "$workflow" --ref "$CHILD_WORKFLOW_REF" "$@")"
             printf '%s\n' "$dispatch_output"
             run_id="$(
               printf '%s\n' "$dispatch_output" |
@@ -383,7 +449,7 @@ jobs:
             if [[ -z "$run_id" ]]; then
               for _ in $(seq 1 60); do
                 run_id="$(
-                  BEFORE_IDS="$before_json" gh run list --workflow "$workflow" --event workflow_dispatch --limit 50 --json databaseId,createdAt \
+                  BEFORE_IDS="$before_json" gh_retry run list --workflow "$workflow" --event workflow_dispatch --limit 50 --json databaseId,createdAt \
                     --jq 'map(select(.databaseId as $id | (env.BEFORE_IDS | fromjson | index($id) | not))) | sort_by(.createdAt) | reverse | .[0].databaseId // empty'
                 )"
                 if [[ -n "$run_id" ]]; then
@@ -407,30 +473,30 @@ jobs:
                 gh run cancel "$run_id" >/dev/null 2>&1 || true
               fi
             }
-            trap cancel_child EXIT INT TERM
+            trap cancel_child INT TERM
 
             poll_count=0
             while true; do
-              status="$(gh run view "$run_id" --json status --jq '.status')"
+              status="$(gh_retry run view "$run_id" --json status --jq '.status')"
               if [[ "$status" == "completed" ]]; then
                 break
               fi
               poll_count=$((poll_count + 1))
               if (( poll_count % 10 == 0 )); then
                 echo "Still waiting on ${workflow}: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
-                gh run view "$run_id" --json jobs --jq '.jobs[] | select(.status != "completed") | {name, status, url}' || true
+                gh_retry run view "$run_id" --json jobs --jq '.jobs[] | select(.status != "completed") | {name, status, url}' || true
               fi
               sleep 30
             done
-            trap - EXIT INT TERM
+            trap - INT TERM
 
-            conclusion="$(gh run view "$run_id" --json conclusion --jq '.conclusion')"
-            url="$(gh run view "$run_id" --json url --jq '.url')"
+            conclusion="$(gh_retry run view "$run_id" --json conclusion --jq '.conclusion')"
+            url="$(gh_retry run view "$run_id" --json url --jq '.url')"
             echo "${workflow} finished with ${conclusion}: ${url}"
             echo "url=${url}" >> "$GITHUB_OUTPUT"
             echo "conclusion=${conclusion}" >> "$GITHUB_OUTPUT"
             if [[ "$conclusion" != "success" ]]; then
-              gh run view "$run_id" --json jobs --jq '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | {name, conclusion, url}' || true
+              gh_retry run view "$run_id" --json jobs --jq '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | {name, conclusion, url}' || true
               exit 1
             fi
           }
@@ -475,14 +541,47 @@ jobs:
         run: |
           set -euo pipefail
 
+          gh_retry() {
+            local attempt delay max output status
+            max=8
+            delay=10
+            for attempt in $(seq 1 "$max"); do
+              set +e
+              output="$(gh "$@" 2>&1)"
+              status=$?
+              set -e
+              if [[ "$status" == "0" ]]; then
+                printf '%s\n' "$output"
+                return 0
+              fi
+              if [[ "$output" != *"HTTP 401: Bad credentials"* && "$output" != *"HTTP 5"* && "$output" != *"api.github.com"* && "$output" != *"connection reset"* && "$output" != *"i/o timeout"* ]]; then
+                printf '%s\n' "$output" >&2
+                return "$status"
+              fi
+              if (( attempt == max )); then
+                break
+              fi
+              printf 'Transient gh failure (%s/%s): %s\n' "$attempt" "$max" "$output" >&2
+              sleep "$delay"
+              if (( delay < 60 )); then
+                delay=$((delay * 2))
+                if (( delay > 60 )); then
+                  delay=60
+                fi
+              fi
+            done
+            printf '%s\n' "$output" >&2
+            return "$status"
+          }
+
           dispatch_and_wait() {
             local workflow="$1"
             shift
 
             local before_json dispatch_output run_id status conclusion url poll_count run_json
-            before_json="$(gh run list --workflow "$workflow" --event workflow_dispatch --limit 100 --json databaseId --jq '[.[].databaseId]')"
+            before_json="$(gh_retry run list --workflow "$workflow" --event workflow_dispatch --limit 100 --json databaseId --jq '[.[].databaseId]')"
 
-            dispatch_output="$(gh workflow run "$workflow" --ref "$CHILD_WORKFLOW_REF" "$@" 2>&1)"
+            dispatch_output="$(gh_retry workflow run "$workflow" --ref "$CHILD_WORKFLOW_REF" "$@")"
             printf '%s\n' "$dispatch_output"
             run_id="$(
               printf '%s\n' "$dispatch_output" |
@@ -493,7 +592,7 @@ jobs:
             if [[ -z "$run_id" ]]; then
               for _ in $(seq 1 60); do
                 run_id="$(
-                  BEFORE_IDS="$before_json" gh run list --workflow "$workflow" --event workflow_dispatch --limit 50 --json databaseId,createdAt \
+                  BEFORE_IDS="$before_json" gh_retry run list --workflow "$workflow" --event workflow_dispatch --limit 50 --json databaseId,createdAt \
                     --jq 'map(select(.databaseId as $id | (env.BEFORE_IDS | fromjson | index($id) | not))) | sort_by(.createdAt) | reverse | .[0].databaseId // empty'
                 )"
                 if [[ -n "$run_id" ]]; then
@@ -557,24 +656,24 @@ jobs:
                 gh run cancel "$run_id" >/dev/null 2>&1 || true
               fi
             }
-            trap cancel_child EXIT INT TERM
+            trap cancel_child INT TERM
 
             poll_count=0
             while true; do
-              status="$(gh run view "$run_id" --json status --jq '.status')"
+              status="$(gh_retry run view "$run_id" --json status --jq '.status')"
               if [[ "$status" == "completed" ]]; then
                 break
               fi
               poll_count=$((poll_count + 1))
               if (( poll_count % 10 == 0 )); then
                 echo "Still waiting on ${workflow}: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
-                gh run view "$run_id" --json jobs --jq '.jobs[] | select(.status != "completed") | {name, status, url}' || true
+                gh_retry run view "$run_id" --json jobs --jq '.jobs[] | select(.status != "completed") | {name, status, url}' || true
               fi
               sleep 30
             done
-            trap - EXIT INT TERM
+            trap - INT TERM
 
-            run_json="$(gh run view "$run_id" --json conclusion,url,jobs)"
+            run_json="$(gh_retry run view "$run_id" --json conclusion,url,jobs)"
             conclusion="$(jq -r '.conclusion' <<< "$run_json")"
             url="$(jq -r '.url' <<< "$run_json")"
             echo "${workflow} finished with ${conclusion}: ${url}"
@@ -747,7 +846,40 @@ jobs:
         run: |
           set -euo pipefail
 
-          before_json="$(gh run list --workflow npm-telegram-beta-e2e.yml --event workflow_dispatch --limit 100 --json databaseId --jq '[.[].databaseId]')"
+          gh_retry() {
+            local attempt delay max output status
+            max=8
+            delay=10
+            for attempt in $(seq 1 "$max"); do
+              set +e
+              output="$(gh "$@" 2>&1)"
+              status=$?
+              set -e
+              if [[ "$status" == "0" ]]; then
+                printf '%s\n' "$output"
+                return 0
+              fi
+              if [[ "$output" != *"HTTP 401: Bad credentials"* && "$output" != *"HTTP 5"* && "$output" != *"api.github.com"* && "$output" != *"connection reset"* && "$output" != *"i/o timeout"* ]]; then
+                printf '%s\n' "$output" >&2
+                return "$status"
+              fi
+              if (( attempt == max )); then
+                break
+              fi
+              printf 'Transient gh failure (%s/%s): %s\n' "$attempt" "$max" "$output" >&2
+              sleep "$delay"
+              if (( delay < 60 )); then
+                delay=$((delay * 2))
+                if (( delay > 60 )); then
+                  delay=60
+                fi
+              fi
+            done
+            printf '%s\n' "$output" >&2
+            return "$status"
+          }
+
+          before_json="$(gh_retry run list --workflow npm-telegram-beta-e2e.yml --event workflow_dispatch --limit 100 --json databaseId --jq '[.[].databaseId]')"
 
           args=(-f package_spec="${PACKAGE_SPEC:-openclaw@beta}" -f harness_ref="$TARGET_SHA" -f provider_mode="$PROVIDER_MODE")
           if [[ -z "${PACKAGE_SPEC// }" ]]; then
@@ -765,12 +897,12 @@ jobs:
             args+=(-f scenario="$SCENARIO")
           fi
 
-          gh workflow run npm-telegram-beta-e2e.yml --ref "$CHILD_WORKFLOW_REF" "${args[@]}"
+          gh_retry workflow run npm-telegram-beta-e2e.yml --ref "$CHILD_WORKFLOW_REF" "${args[@]}"
 
           run_id=""
           for _ in $(seq 1 60); do
             run_id="$(
-              BEFORE_IDS="$before_json" gh run list --workflow npm-telegram-beta-e2e.yml --event workflow_dispatch --limit 50 --json databaseId,createdAt \
+              BEFORE_IDS="$before_json" gh_retry run list --workflow npm-telegram-beta-e2e.yml --event workflow_dispatch --limit 50 --json databaseId,createdAt \
                 --jq 'map(select(.databaseId as $id | (env.BEFORE_IDS | fromjson | index($id) | not))) | sort_by(.createdAt) | reverse | .[0].databaseId // empty'
             )"
             if [[ -n "$run_id" ]]; then
@@ -793,30 +925,30 @@ jobs:
               gh run cancel "$run_id" >/dev/null 2>&1 || true
             fi
           }
-          trap cancel_child EXIT INT TERM
+          trap cancel_child INT TERM
 
           poll_count=0
           while true; do
-            status="$(gh run view "$run_id" --json status --jq '.status')"
+            status="$(gh_retry run view "$run_id" --json status --jq '.status')"
             if [[ "$status" == "completed" ]]; then
               break
             fi
             poll_count=$((poll_count + 1))
             if (( poll_count % 10 == 0 )); then
               echo "Still waiting on npm-telegram-beta-e2e.yml: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
-              gh run view "$run_id" --json jobs --jq '.jobs[] | select(.status != "completed") | {name, status, url}' || true
+              gh_retry run view "$run_id" --json jobs --jq '.jobs[] | select(.status != "completed") | {name, status, url}' || true
             fi
             sleep 30
           done
-          trap - EXIT INT TERM
+          trap - INT TERM
 
-          conclusion="$(gh run view "$run_id" --json conclusion --jq '.conclusion')"
-          url="$(gh run view "$run_id" --json url --jq '.url')"
+          conclusion="$(gh_retry run view "$run_id" --json conclusion --jq '.conclusion')"
+          url="$(gh_retry run view "$run_id" --json url --jq '.url')"
           echo "npm-telegram-beta-e2e.yml finished with ${conclusion}: ${url}"
           echo "url=${url}" >> "$GITHUB_OUTPUT"
           echo "conclusion=${conclusion}" >> "$GITHUB_OUTPUT"
           if [[ "$conclusion" != "success" ]]; then
-            gh run view "$run_id" --json jobs --jq '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | {name, conclusion, url}' || true
+            gh_retry run view "$run_id" --json jobs --jq '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | {name, conclusion, url}' || true
             exit 1
           fi
 
@@ -844,6 +976,39 @@ jobs:
           CHILD_WORKFLOW_REF: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+
+          gh_retry() {
+            local attempt delay max output status
+            max=8
+            delay=10
+            for attempt in $(seq 1 "$max"); do
+              set +e
+              output="$(gh "$@" 2>&1)"
+              status=$?
+              set -e
+              if [[ "$status" == "0" ]]; then
+                printf '%s\n' "$output"
+                return 0
+              fi
+              if [[ "$output" != *"HTTP 401: Bad credentials"* && "$output" != *"HTTP 5"* && "$output" != *"api.github.com"* && "$output" != *"connection reset"* && "$output" != *"i/o timeout"* ]]; then
+                printf '%s\n' "$output" >&2
+                return "$status"
+              fi
+              if (( attempt == max )); then
+                break
+              fi
+              printf 'Transient gh failure (%s/%s): %s\n' "$attempt" "$max" "$output" >&2
+              sleep "$delay"
+              if (( delay < 60 )); then
+                delay=$((delay * 2))
+                if (( delay > 60 )); then
+                  delay=60
+                fi
+              fi
+            done
+            printf '%s\n' "$output" >&2
+            return "$status"
+          }
 
           release_check_blocking_job() {
             case "$1" in
@@ -901,7 +1066,7 @@ jobs:
             fi
 
             local run_json status conclusion url attempt head_sha
-            run_json="$(gh run view "$run_id" --json status,conclusion,url,attempt,headSha,jobs)"
+            run_json="$(gh_retry run view "$run_id" --json status,conclusion,url,attempt,headSha,jobs)"
             status="$(jq -r '.status' <<< "$run_json")"
             conclusion="$(jq -r '.conclusion' <<< "$run_json")"
             url="$(jq -r '.url' <<< "$run_json")"
@@ -948,7 +1113,7 @@ jobs:
               fi
 
               local run_json row
-              run_json="$(gh run view "$run_id" --json status,conclusion,url,createdAt,updatedAt,headSha)"
+              run_json="$(gh_retry run view "$run_id" --json status,conclusion,url,createdAt,updatedAt,headSha)"
               row="$(
                 jq -r --arg label "$label" '
                   def ts: fromdateiso8601;
@@ -983,7 +1148,7 @@ jobs:
               echo
               echo "### Slowest jobs: ${label}"
               echo
-              gh run view "$run_id" --json jobs --jq '
+              gh_retry run view "$run_id" --json jobs --jq '
                 def ts: fromdateiso8601;
                 "| Job | Result | Minutes |",
                 "| --- | --- | ---: |",
@@ -1000,7 +1165,7 @@ jobs:
               echo
               echo "### Longest queues: ${label}"
               echo
-              gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" --jq ".jobs[] | @json" | jq -sr '
+              gh_retry api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" --jq ".jobs[] | @json" | jq -sr '
                 def ts: fromdateiso8601;
                 "| Job | Result | Queue minutes | Run minutes |",
                 "| --- | --- | ---: | ---: |",
@@ -1029,7 +1194,7 @@ jobs:
             fi
 
             local run_json status conclusion artifacts_json
-            run_json="$(gh run view "$run_id" --json status,conclusion,url,jobs)"
+            run_json="$(gh_retry run view "$run_id" --json status,conclusion,url,jobs)"
             status="$(jq -r '.status' <<< "$run_json")"
             conclusion="$(jq -r '.conclusion' <<< "$run_json")"
             if [[ "$status" == "completed" && "$conclusion" == "success" ]]; then
@@ -1052,7 +1217,7 @@ jobs:
               echo
               echo "Artifacts:"
               artifacts_json="$(
-                gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" 2>/dev/null || true
+                gh_retry api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" 2>/dev/null || true
               )"
               if [[ -n "${artifacts_json// }" ]]; then
                 jq -r '
