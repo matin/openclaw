@@ -475,7 +475,7 @@ function isToolResultError(result: AgentToolResult): boolean {
   );
 }
 
-function isToolResultYield(result: AgentToolResult<unknown>): boolean {
+function isToolResultYield(result: AgentToolResult): boolean {
   const details = result.details;
   if (!isRecord(details) || typeof details.status !== "string") {
     return false;
