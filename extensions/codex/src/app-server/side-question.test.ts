@@ -516,7 +516,12 @@ describe("runCodexAppServerSideQuestion", () => {
           sessionKey: "agent:main:session-1",
           runId: "run-side-1",
           channelId: "voice-room",
-          allowedEvents: ["pre_tool_use", "post_tool_use", "before_agent_finalize"],
+          allowedEvents: [
+            "pre_tool_use",
+            "post_tool_use",
+            "permission_request",
+            "before_agent_finalize",
+          ],
         });
         return threadResult("side-thread");
       }
@@ -555,7 +560,12 @@ describe("runCodexAppServerSideQuestion", () => {
     expect(config?.["features.hooks"]).toBe(true);
     expect(config?.["features.code_mode"]).toBe(true);
     expect(config?.["features.code_mode_only"]).toBe(false);
-    expect(config?.["hooks.PermissionRequest"]).toEqual([]);
+    const permissionHooks = config?.["hooks.PermissionRequest"] as
+      | Array<{ hooks?: Array<{ command?: string; timeout?: number; type?: string }> }>
+      | undefined;
+    const permissionCommand = permissionHooks?.[0]?.hooks?.[0];
+    expect(permissionCommand?.type).toBe("command");
+    expect(permissionCommand?.timeout).toBe(9);
     const preToolUseHooks = config?.["hooks.PreToolUse"] as
       | Array<{ hooks?: Array<{ command?: string; timeout?: number; type?: string }> }>
       | undefined;
@@ -570,7 +580,8 @@ describe("runCodexAppServerSideQuestion", () => {
     expect(preToolUseState?.enabled).toBe(true);
     expect(preToolUseState?.trusted_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
     const permissionRequestState = codexHookStateForEvent(hookState, "permission_request");
-    expect(permissionRequestState).toEqual({ enabled: false });
+    expect(permissionRequestState).toMatchObject({ enabled: true });
+    expect(permissionRequestState?.trusted_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
     const turnStartCall = client.request.mock.calls.find(([method]) => method === "turn/start");
     expect(turnStartCall?.[1]).not.toHaveProperty("config");
     expect(relayIdDuringFork).toBeDefined();

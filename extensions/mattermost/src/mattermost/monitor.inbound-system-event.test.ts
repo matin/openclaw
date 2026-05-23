@@ -838,7 +838,22 @@ describe("mattermost inbound user posts", () => {
     await monitor;
 
     expect(runtimeCore.channel.session.recordInboundSession).toHaveBeenCalledTimes(1);
-    const [recordCall] = runtimeCore.channel.session.recordInboundSession.mock.calls.at(0) ?? [];
+    const recordCall = (
+      runtimeCore.channel.session.recordInboundSession.mock.calls as unknown as Array<
+        [
+          {
+            sessionKey?: string;
+            updateLastRoute?: {
+              sessionKey?: string;
+              channel?: string;
+              to?: string;
+              accountId?: string;
+              mainDmOwnerPin?: unknown;
+            };
+          },
+        ]
+      >
+    )[0]?.[0];
     expect(recordCall?.sessionKey).toBe("agent:main:mattermost:direct:user-1");
     const updateLastRoute = recordCall?.updateLastRoute;
     expect(updateLastRoute?.sessionKey).toBe("agent:main:mattermost:direct:user-1");

@@ -1,6 +1,5 @@
 import { readSqliteSessionRoutingInfo } from "../config/sessions/session-entries.sqlite.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
-import { parseRawSessionConversationRef } from "../sessions/session-key-utils.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
 import type { PluginHookAgentContext } from "./hook-types.js";
 
@@ -60,10 +59,6 @@ export function resolveAgentHookChannelId(params: {
 }): string | undefined {
   const provider = normalizeOptionalString(params.messageProvider);
   const messageChannel = normalizeOptionalString(params.messageChannel);
-  const parsed = parseRawSessionConversationRef(params.sessionKey);
-  if (parsed?.rawId) {
-    return parsed.rawId;
-  }
   const typedConversationPeerId = readHookSessionConversationPeerId(params.sessionKey);
   if (typedConversationPeerId) {
     return (

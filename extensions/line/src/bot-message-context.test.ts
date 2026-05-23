@@ -234,7 +234,7 @@ describe("buildLineMessageContext", () => {
   it("keeps per-channel-peer direct-message last-route writes on the isolated session", async () => {
     const event = createMessageEvent({ type: "user", userId: "user-1" });
     const directCfg: OpenClawConfig = {
-      session: { store: storePath, dmScope: "per-channel-peer" },
+      session: { dmScope: "per-channel-peer" },
     };
 
     const context = await buildLineMessageContext({
