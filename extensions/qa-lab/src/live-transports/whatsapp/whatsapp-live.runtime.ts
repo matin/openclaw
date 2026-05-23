@@ -218,6 +218,17 @@ async function discardRejectedWhatsAppCredentialLease(params: {
   }
 }
 
+function isPreviouslyRejectedWhatsAppCredentialLease(params: {
+  lease: WhatsAppCredentialLease;
+  rejectedCredentialIds: ReadonlySet<string>;
+}) {
+  return (
+    params.lease.source === "convex" &&
+    typeof params.lease.credentialId === "string" &&
+    params.rejectedCredentialIds.has(params.lease.credentialId)
+  );
+}
+
 const WHATSAPP_QA_CAPTURE_CONTENT_ENV = "OPENCLAW_QA_WHATSAPP_CAPTURE_CONTENT";
 const WHATSAPP_QA_GATEWAY_HEAP_CHECKPOINTS_ENV = "OPENCLAW_QA_GATEWAY_HEAP_CHECKPOINTS";
 const QA_REDACT_PUBLIC_METADATA_ENV = "OPENCLAW_QA_REDACT_PUBLIC_METADATA";
@@ -1268,6 +1279,8 @@ export async function runWhatsAppQaLive(params: {
     let activeDriver: WhatsAppQaDriverSession | undefined;
     let activeDriverAuthDir: string | undefined;
     let activeSutAuthDir: string | undefined;
+    const rejectedCredentialIds = new Set<string>();
+    const skippedRejectedCredentialIds = new Set<string>();
 
     for (let credentialAttempt = 1; credentialAttempt <= credentialAttempts; credentialAttempt += 1) {
       credentialLease = await acquireQaCredentialLease({
@@ -1284,6 +1297,29 @@ export async function runWhatsAppQaLive(params: {
       credentialLeases.push(credentialLease);
       const heartbeat = startQaCredentialLeaseHeartbeat(credentialLease);
       leaseHeartbeats.push(heartbeat);
+      if (
+        isPreviouslyRejectedWhatsAppCredentialLease({
+          lease: credentialLease,
+          rejectedCredentialIds,
+        })
+      ) {
+        const credentialId = credentialLease.credentialId;
+        if (credentialId && !skippedRejectedCredentialIds.has(credentialId)) {
+          skippedRejectedCredentialIds.add(credentialId);
+          cleanupIssues.push(
+            `Convex broker returned previously rejected WhatsApp credential ${toCredentialFingerprint(credentialId) ?? "<unknown>"}; skipping repeated logged-out session attempt.`,
+          );
+        }
+        await discardRejectedWhatsAppCredentialLease({
+          cleanupIssues,
+          heartbeat,
+          heartbeats: leaseHeartbeats,
+          lease: credentialLease,
+          leases: credentialLeases,
+        });
+        credentialLease = undefined;
+        continue;
+      }
       runtimeEnv = credentialLease.payload;
       const tempAuthRoot = await fs.mkdtemp(
         path.join(resolvePreferredOpenClawTmpDir(), "openclaw-whatsapp-qa-"),
@@ -1316,6 +1352,9 @@ export async function runWhatsAppQaLive(params: {
         ) {
           throw error;
         }
+        if (credentialLease.credentialId) {
+          rejectedCredentialIds.add(credentialLease.credentialId);
+        }
         cleanupIssues.push(
           `WhatsApp credential ${toCredentialFingerprint(credentialLease.credentialId) ?? "<unknown>"} was logged out; trying another Convex lease.`,
         );
@@ -1331,6 +1370,11 @@ export async function runWhatsAppQaLive(params: {
     }
 
     if (!activeDriver || !activeDriverAuthDir || !activeSutAuthDir || !runtimeEnv) {
+      if (rejectedCredentialIds.size > 0) {
+        throw new Error(
+          "WhatsApp QA could not start a driver session because the Convex credential pool returned no usable WhatsApp lease after rejecting logged-out credentials.",
+        );
+      }
       throw new Error("WhatsApp QA could not start a driver session.");
     }
 
@@ -1587,6 +1631,7 @@ export const testing = {
   findScenarios,
   formatWhatsAppScenarioTimings,
   heapSnapshotLooksComplete,
+  isPreviouslyRejectedWhatsAppCredentialLease,
   isLoggedOutWhatsAppQaDriverError,
   isTransientWhatsAppQaDriverError,
   parseWhatsAppQaCredentialPayload,

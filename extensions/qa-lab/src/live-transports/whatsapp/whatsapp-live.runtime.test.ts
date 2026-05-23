@@ -438,4 +438,38 @@ describe("WhatsApp QA live runtime", () => {
     expect(leases).toEqual([]);
     expect(cleanupIssues).toEqual([]);
   });
+
+  it("recognizes Convex WhatsApp credentials rejected earlier in the same run", () => {
+    const rejectedCredentialIds = new Set(["cred-1"]);
+
+    expect(
+      testing.isPreviouslyRejectedWhatsAppCredentialLease({
+        rejectedCredentialIds,
+        lease: {
+          source: "convex",
+          credentialId: "cred-1",
+        } as never,
+      }),
+    ).toBe(true);
+
+    expect(
+      testing.isPreviouslyRejectedWhatsAppCredentialLease({
+        rejectedCredentialIds,
+        lease: {
+          source: "convex",
+          credentialId: "cred-2",
+        } as never,
+      }),
+    ).toBe(false);
+
+    expect(
+      testing.isPreviouslyRejectedWhatsAppCredentialLease({
+        rejectedCredentialIds,
+        lease: {
+          source: "env",
+          credentialId: "cred-1",
+        } as never,
+      }),
+    ).toBe(false);
+  });
 });
