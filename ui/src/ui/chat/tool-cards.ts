@@ -136,6 +136,23 @@ ${text}
 \`\`\``;
 }
 
+export function formatCollapsedToolSummaryText(value: string | undefined): string | undefined {
+  const normalized = value?.trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return undefined;
+  }
+  const withoutConnector = normalized.replace(/^with\s+/i, "").trim();
+  return withoutConnector || normalized;
+}
+
+export function formatCollapsedToolPreviewText(value: string | undefined): string | undefined {
+  const normalized = formatCollapsedToolSummaryText(value);
+  if (!normalized) {
+    return undefined;
+  }
+  return normalized.slice(0, 120);
+}
+
 function findLatestCard(cards: ToolCard[], id: string, name: string): ToolCard | undefined {
   for (let i = cards.length - 1; i >= 0; i--) {
     const card = cards[i];
@@ -398,6 +415,8 @@ function renderCollapsedToolSummary(params: {
   onToggleExpanded: () => void;
 }) {
   const { label, icon, name, expanded, onToggleExpanded } = params;
+  const displayLabel = formatCollapsedToolSummaryText(label) ?? label;
+  const displayName = formatCollapsedToolSummaryText(name);
   return html`
     <button
       class="chat-tool-msg-summary"
@@ -406,8 +425,10 @@ function renderCollapsedToolSummary(params: {
       @click=${() => onToggleExpanded()}
     >
       <span class="chat-tool-msg-summary__icon">${icon}</span>
-      <span class="chat-tool-msg-summary__label">${label}</span>
-      ${name ? html`<span class="chat-tool-msg-summary__names">${name}</span>` : nothing}
+      <span class="chat-tool-msg-summary__label">${displayLabel}</span>
+      ${displayName
+        ? html`<span class="chat-tool-msg-summary__names">${displayName}</span>`
+        : nothing}
     </button>
   `;
 }
