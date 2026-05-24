@@ -6671,6 +6671,7 @@ describe("runCodexAppServerAttempt", () => {
               inputMessages: true,
               outputMessages: true,
               systemPrompt: true,
+              toolDefinitions: true,
             },
           },
         },
