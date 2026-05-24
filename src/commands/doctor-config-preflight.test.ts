@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { promoteConfigSnapshotToLastKnownGood, readConfigFileSnapshot } from "../config/config.js";
 import { withTempHome, writeOpenClawConfig } from "../config/test-helpers.js";
 import {
@@ -74,6 +74,46 @@ describe("runDoctorConfigPreflight", () => {
       await expect(
         fs.readFile(path.join(home, ".openclaw", "openclaw.json"), "utf-8"),
       ).resolves.toContain('"mode": "local"');
+    });
+  });
+
+  it("does not overwrite canonical config created during missing-config recovery", async () => {
+    await withTempHome(async (home) => {
+      const targetPath = path.join(home, ".openclaw", "openclaw.json");
+      const legacyPath = path.join(home, ".openclaw", "moltbot.json");
+      await fs.mkdir(path.dirname(legacyPath), { recursive: true });
+      await fs.writeFile(
+        legacyPath,
+        `${JSON.stringify({ gateway: { mode: "local", port: 19091 } }, null, 2)}\n`,
+        "utf-8",
+      );
+      const originalCopyFile = fs.copyFile;
+      let wroteConcurrentConfig = false;
+      const copyFileSpy = vi.spyOn(fs, "copyFile").mockImplementation(async (...args) => {
+        const destination = String(args[1]);
+        if (!wroteConcurrentConfig && destination.endsWith(".tmp")) {
+          wroteConcurrentConfig = true;
+          await fs.writeFile(
+            targetPath,
+            `${JSON.stringify({ gateway: { mode: "remote", port: 19092 } }, null, 2)}\n`,
+            "utf-8",
+          );
+        }
+        return originalCopyFile(...args);
+      });
+
+      try {
+        const preflight = await runDoctorConfigPreflight({
+          migrateState: false,
+          invalidConfigNote: false,
+        });
+
+        expect(preflight.snapshot.valid).toBe(true);
+        expect(preflight.snapshot.config.gateway?.mode).toBe("remote");
+        await expect(fs.readFile(targetPath, "utf-8")).resolves.toContain('"mode": "remote"');
+      } finally {
+        copyFileSpy.mockRestore();
+      }
     });
   });
 

@@ -59,8 +59,11 @@ async function copyLegacyConfigIntoPlace(params: {
     if (params.backupPath) {
       await fs.rename(params.targetPath, params.backupPath);
       backedUp = true;
+      await fs.rename(tempPath, params.targetPath);
+    } else {
+      await fs.copyFile(tempPath, params.targetPath, fs.constants.COPYFILE_EXCL);
+      await fs.unlink(tempPath).catch(() => {});
     }
-    await fs.rename(tempPath, params.targetPath);
   } catch (error) {
     await fs.unlink(tempPath).catch(() => {});
     if (backedUp && params.backupPath) {
