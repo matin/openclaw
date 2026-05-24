@@ -6,6 +6,8 @@ Docs: https://docs.openclaw.ai
 
 ### Changes
 
+- Diagnostics: add gated OpenTelemetry LLM prompt, output, and tool-definition details for Codex and Pi model-call spans. Thanks @amknight.
+
 ### Fixes
 
 - Codex: log when implicit app-server `never` approvals are promoted for OpenClaw tool policy, including whether the trigger was a `before_tool_call` hook or trusted tool policy.
