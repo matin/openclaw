@@ -7,7 +7,11 @@ import {
 } from "../../../agents/internal-runtime-context.js";
 import type { TranscriptEntry as SessionTranscriptEntry } from "../../../agents/transcript/session-transcript-types.js";
 import { resolveStateDir } from "../../../config/paths.js";
-import { replaceSqliteSessionTranscriptEvents } from "../../../config/sessions/transcript-store.sqlite.js";
+import {
+  hasSqliteSessionTranscriptEvents,
+  mergeSqliteSessionTranscriptEvents,
+  replaceSqliteSessionTranscriptEvents,
+} from "../../../config/sessions/transcript-store.sqlite.js";
 import { createPluginStateSyncKeyedStore } from "../../../plugin-state/plugin-state-store.js";
 import { DEFAULT_AGENT_ID, normalizeAgentId } from "../../../routing/session-key.js";
 import { note } from "../../../terminal/note.js";
@@ -40,6 +44,8 @@ type TranscriptMigrationResult = TranscriptRepairResult & {
   imported: boolean;
   removedSource: boolean;
   sessionId?: string;
+  dedupedEntries?: number;
+  quarantined?: boolean;
 };
 
 type CodexAppServerBindingMigrationResult = {
@@ -198,7 +204,7 @@ export async function migrateSessionTranscriptFileToSqlite(params: {
     const entries = parseTranscriptEntries(raw);
     const sessionId = getSessionId(entries);
     if (!sessionId) {
-      return {
+      const result: TranscriptMigrationResult = {
         filePath: params.filePath,
         broken: false,
         repaired: false,
@@ -208,6 +214,15 @@ export async function migrateSessionTranscriptFileToSqlite(params: {
         activeEntries: 0,
         reason: "missing session header",
       };
+      if (params.shouldRepair) {
+        try {
+          await fs.rename(params.filePath, `${params.filePath}.legacy-no-header-${Date.now()}`);
+          result.quarantined = true;
+        } catch {
+          // Best effort. A failed rename leaves the source visible for manual inspection.
+        }
+      }
+      return result;
     }
 
     const activePath = selectActivePath(entries);
@@ -229,12 +244,38 @@ export async function migrateSessionTranscriptFileToSqlite(params: {
       };
     }
 
+    const headerVersion = (header as { version?: unknown } | undefined)?.version;
     migrateLegacyTranscriptEntries(events as unknown as SessionTranscriptEntry[]);
-    replaceSqliteSessionTranscriptEvents({
-      agentId: params.agentId ?? resolveAgentIdFromTranscriptPath(params.filePath),
-      sessionId,
-      events,
-    });
+    const agentId = params.agentId ?? resolveAgentIdFromTranscriptPath(params.filePath);
+    let dedupedEntries: number | undefined;
+    if (broken) {
+      if (hasSqliteSessionTranscriptEvents({ agentId, sessionId })) {
+        return {
+          filePath: params.filePath,
+          broken,
+          repaired: false,
+          imported: false,
+          removedSource: false,
+          originalEntries: entries.length,
+          activeEntries: activePath?.length ?? 0,
+          sessionId,
+          reason: "sqlite already has events for this session; refusing to replace",
+        };
+      }
+      replaceSqliteSessionTranscriptEvents({
+        agentId,
+        sessionId,
+        events,
+      });
+    } else {
+      const merged = mergeSqliteSessionTranscriptEvents({
+        agentId,
+        sessionId,
+        events,
+        legacyReplayFingerprintDedupe: typeof headerVersion !== "number" || headerVersion < 2,
+      });
+      dedupedEntries = merged.skipped;
+    }
     await fs.rm(params.filePath, { force: true });
 
     return {
@@ -246,6 +287,7 @@ export async function migrateSessionTranscriptFileToSqlite(params: {
       originalEntries: entries.length,
       activeEntries: activePath?.length ?? 0,
       sessionId,
+      ...(dedupedEntries === undefined ? {} : { dedupedEntries }),
     };
   } catch (err) {
     return {
@@ -443,13 +485,17 @@ export async function noteSessionTranscriptHealth(params?: {
   }
   const broken = results.filter((result) => result.broken);
   const imported = results.filter((result) => result.imported);
-  const failed = results.filter((result) => result.reason && !result.imported);
+  const quarantined = results.filter((result) => result.quarantined);
+  const failed = results.filter(
+    (result) => result.reason && !result.imported && !result.quarantined,
+  );
   const importedCodexBindings = codexBindingResults.filter((result) => result.imported);
   const failedCodexBindings = codexBindingResults.filter(
     (result) => result.reason && !result.imported,
   );
 
   const repairedCount = broken.filter((result) => result.repaired).length;
+  const dedupedTotal = imported.reduce((total, result) => total + (result.dedupedEntries ?? 0), 0);
   const legacyCount = results.length;
   const lines: string[] = [];
   if (legacyCount > 0) {
@@ -462,9 +508,11 @@ export async function noteSessionTranscriptHealth(params?: {
           ? result.repaired
             ? "imported with active-branch repair"
             : "imported"
-          : result.broken
-            ? "needs import + repair"
-            : "needs import";
+          : result.quarantined
+            ? "quarantined"
+            : result.broken
+              ? "needs import + repair"
+              : "needs import";
         const reason = result.reason ? ` reason=${result.reason}` : "";
         return `- ${shortenHomePath(result.filePath)} ${status} entries=${result.originalEntries}${reason}`;
       }),
@@ -491,14 +539,23 @@ export async function noteSessionTranscriptHealth(params?: {
   if (!shouldRepair) {
     lines.push('- Run "openclaw doctor --fix" to import legacy session files into SQLite.');
   } else if (imported.length > 0) {
+    const dedupedSuffix =
+      dedupedTotal > 0
+        ? ` (${dedupedTotal} event${dedupedTotal === 1 ? "" : "s"} already present in SQLite left as-is)`
+        : "";
     lines.push(
-      `- Imported ${imported.length} transcript file${imported.length === 1 ? "" : "s"} into SQLite and removed the JSONL source${imported.length === 1 ? "" : "s"}.`,
+      `- Imported ${imported.length} transcript file${imported.length === 1 ? "" : "s"} into SQLite and removed the JSONL source${imported.length === 1 ? "" : "s"}${dedupedSuffix}.`,
     );
     if (repairedCount > 0) {
       lines.push(
         `- Repaired duplicated prompt-rewrite branches for ${repairedCount} transcript file${repairedCount === 1 ? "" : "s"} during import.`,
       );
     }
+  }
+  if (shouldRepair && quarantined.length > 0) {
+    lines.push(
+      `- Quarantined ${quarantined.length} transcript file${quarantined.length === 1 ? "" : "s"} that lack a session header with .legacy-no-header-<ts> suffix.`,
+    );
   }
   if (shouldRepair && importedCodexBindings.length > 0) {
     lines.push(

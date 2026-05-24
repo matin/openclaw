@@ -44,6 +44,7 @@ export type AppendSqliteSessionTranscriptMessageOptions = SqliteSessionTranscrip
 
 export type ReplaceSqliteSessionTranscriptEventsOptions = SqliteSessionTranscriptStoreOptions & {
   events: unknown[];
+  legacyReplayFingerprintDedupe?: boolean;
   now?: () => number;
 };
 
@@ -207,6 +208,24 @@ function readNextTranscriptSeq(database: OpenClawAgentDatabase, sessionId: strin
       .where("session_id", "=", sessionId),
   );
   return typeof row?.next_seq === "bigint" ? Number(row.next_seq) : (row?.next_seq ?? 0);
+}
+
+function readTranscriptSessionUpdatedAt(
+  database: OpenClawAgentDatabase,
+  sessionId: string,
+): number | undefined {
+  const row = executeSqliteQueryTakeFirstSync(
+    database.db,
+    getAgentTranscriptKysely(database.db)
+      .selectFrom("sessions")
+      .select(["updated_at"])
+      .where("session_id", "=", sessionId),
+  );
+  if (row?.updated_at === undefined || row.updated_at === null) {
+    return undefined;
+  }
+  const updatedAt = typeof row.updated_at === "bigint" ? Number(row.updated_at) : row.updated_at;
+  return Number.isFinite(updatedAt) ? updatedAt : undefined;
 }
 
 function bindTranscriptSessionRoot(params: {
@@ -722,6 +741,220 @@ export function replaceSqliteSessionTranscriptEvents(
   }, options);
 
   return { replaced: options.events.length };
+}
+
+function readTranscriptEventId(event: unknown): string | null {
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    return null;
+  }
+  const eventId = (event as { id?: unknown }).id;
+  return typeof eventId === "string" && eventId.trim() ? eventId : null;
+}
+
+function readTranscriptEventMessageIdempotencyKey(event: unknown): string | null {
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    return null;
+  }
+  return readMessageIdempotencyKey((event as { message?: unknown }).message);
+}
+
+function normalizeTranscriptEventFingerprintValue(
+  value: unknown,
+  options: { stripTranscriptIdentity: boolean },
+): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) =>
+      normalizeTranscriptEventFingerprintValue(entry, { stripTranscriptIdentity: false }),
+    );
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  const normalized: Record<string, unknown> = {};
+  for (const key of Object.keys(value).toSorted()) {
+    if (
+      options.stripTranscriptIdentity &&
+      (key === "id" || key === "parentId" || key === "firstKeptEntryId")
+    ) {
+      continue;
+    }
+    normalized[key] = normalizeTranscriptEventFingerprintValue(
+      (value as Record<string, unknown>)[key],
+      { stripTranscriptIdentity: false },
+    );
+  }
+  return normalized;
+}
+
+function readTranscriptEventFingerprint(event: unknown): string | null {
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    return null;
+  }
+  return JSON.stringify(
+    normalizeTranscriptEventFingerprintValue(event, { stripTranscriptIdentity: true }),
+  );
+}
+
+function remapTranscriptEventReferences(event: unknown, eventIds: Map<string, string>): unknown {
+  if (!event || typeof event !== "object" || Array.isArray(event) || eventIds.size === 0) {
+    return event;
+  }
+  const record = event as Record<string, unknown>;
+  const parentId = typeof record.parentId === "string" ? eventIds.get(record.parentId) : undefined;
+  const firstKeptEntryId =
+    typeof record.firstKeptEntryId === "string" ? eventIds.get(record.firstKeptEntryId) : undefined;
+  if (!parentId && !firstKeptEntryId) {
+    return event;
+  }
+  return {
+    ...record,
+    ...(parentId ? { parentId } : {}),
+    ...(firstKeptEntryId ? { firstKeptEntryId } : {}),
+  };
+}
+
+export function mergeSqliteSessionTranscriptEvents(
+  options: ReplaceSqliteSessionTranscriptEventsOptions,
+): { merged: number; skipped: number } {
+  const { sessionId } = normalizeTranscriptScope(options);
+  const now = options.now?.() ?? Date.now();
+  const timestamps = options.events.map(readTranscriptEventTimestampMs);
+  let fallbackCreatedAt = timestamps.find((timestamp) => timestamp !== undefined) ?? now;
+  const entries = options.events.map((event, index) => {
+    const createdAt = timestamps[index] ?? fallbackCreatedAt;
+    fallbackCreatedAt = createdAt;
+    return { event, createdAt };
+  });
+  const updatedAt = entries.length > 0 ? Math.max(...entries.map((entry) => entry.createdAt)) : now;
+  let merged = 0;
+  let skipped = 0;
+
+  runOpenClawAgentWriteTransaction((database) => {
+    const sessionUpdatedAt = Math.max(
+      updatedAt,
+      readTranscriptSessionUpdatedAt(database, sessionId) ?? 0,
+    );
+    ensureTranscriptSessionRoot({ database, sessionId, updatedAt: sessionUpdatedAt });
+    const existingIdentities = executeSqliteQuerySync(
+      database.db,
+      getAgentTranscriptKysely(database.db)
+        .selectFrom("transcript_event_identities")
+        .select(["event_id", "message_idempotency_key"])
+        .where("session_id", "=", sessionId),
+    );
+    const seenEventIds = new Set<string>();
+    const seenMessageIdempotencyKeys = new Map<string, string | null>();
+    for (const row of existingIdentities.rows) {
+      if (typeof row.event_id === "string") {
+        seenEventIds.add(row.event_id);
+      }
+      if (typeof row.message_idempotency_key === "string") {
+        seenMessageIdempotencyKeys.set(
+          row.message_idempotency_key,
+          typeof row.event_id === "string" ? row.event_id : null,
+        );
+      }
+    }
+
+    const existingEvents = executeSqliteQuerySync(
+      database.db,
+      getAgentTranscriptKysely(database.db)
+        .selectFrom("transcript_events")
+        .select(["seq", "event_json", "created_at"])
+        .where("session_id", "=", sessionId)
+        .orderBy("seq", "asc"),
+    );
+    const legacyReplayFingerprints: Array<{ fingerprint: string; eventId: string | null }> = [];
+    let existingMinSeq: number | undefined;
+    let existingMaxCreatedAt: number | undefined;
+    for (const row of existingEvents.rows) {
+      const seq = typeof row.seq === "bigint" ? Number(row.seq) : row.seq;
+      existingMinSeq = Math.min(existingMinSeq ?? seq, seq);
+      const createdAt = parseCreatedAt(row.created_at);
+      existingMaxCreatedAt = Math.max(existingMaxCreatedAt ?? createdAt, createdAt);
+      const existingEvent = parseTranscriptEventJson(row.event_json, seq);
+      const fingerprint = readTranscriptEventFingerprint(existingEvent);
+      if (options.legacyReplayFingerprintDedupe && fingerprint) {
+        legacyReplayFingerprints.push({
+          fingerprint,
+          eventId: readTranscriptEventId(existingEvent),
+        });
+      }
+    }
+
+    const remappedEventIds = new Map<string, string>();
+    const shouldSkipNewStaleEvents =
+      existingMinSeq !== undefined &&
+      existingMaxCreatedAt !== undefined &&
+      updatedAt < existingMaxCreatedAt;
+    let nextSeq = readNextTranscriptSeq(database, sessionId);
+    let legacyReplayFingerprintIndex = 0;
+    const consumeExistingFingerprint = (fingerprint: string | null): string | null | undefined => {
+      if (!options.legacyReplayFingerprintDedupe || !fingerprint) {
+        return undefined;
+      }
+      const existing = legacyReplayFingerprints[legacyReplayFingerprintIndex];
+      if (existing?.fingerprint !== fingerprint) {
+        return undefined;
+      }
+      legacyReplayFingerprintIndex += 1;
+      return existing.eventId;
+    };
+    for (const entry of entries) {
+      const event = remapTranscriptEventReferences(entry.event, remappedEventIds);
+      const eventId = readTranscriptEventId(event);
+      const fingerprint = options.legacyReplayFingerprintDedupe
+        ? readTranscriptEventFingerprint(event)
+        : null;
+      if (eventId && seenEventIds.has(eventId)) {
+        remappedEventIds.set(eventId, eventId);
+        consumeExistingFingerprint(fingerprint);
+        skipped += 1;
+        continue;
+      }
+      const idempotencyKey = readTranscriptEventMessageIdempotencyKey(event);
+      const existingIdempotentEventId = idempotencyKey
+        ? seenMessageIdempotencyKeys.get(idempotencyKey)
+        : undefined;
+      if (existingIdempotentEventId !== undefined) {
+        if (eventId && existingIdempotentEventId) {
+          remappedEventIds.set(eventId, existingIdempotentEventId);
+        }
+        consumeExistingFingerprint(fingerprint);
+        skipped += 1;
+        continue;
+      }
+      const existingEventId = consumeExistingFingerprint(fingerprint);
+      if (existingEventId !== undefined) {
+        if (eventId && existingEventId) {
+          remappedEventIds.set(eventId, existingEventId);
+        }
+        skipped += 1;
+        continue;
+      }
+      if (shouldSkipNewStaleEvents) {
+        skipped += 1;
+        continue;
+      }
+      insertTranscriptEvent({
+        database,
+        sessionId,
+        seq: nextSeq,
+        event,
+        createdAt: entry.createdAt,
+      });
+      nextSeq += 1;
+      merged += 1;
+      if (eventId) {
+        seenEventIds.add(eventId);
+      }
+      if (idempotencyKey) {
+        seenMessageIdempotencyKeys.set(idempotencyKey, eventId);
+      }
+    }
+  }, options);
+
+  return { merged, skipped };
 }
 
 export function loadSqliteSessionTranscriptEvents(

@@ -30,7 +30,7 @@ import {
 import type { SessionEntry } from "../../config/sessions.js";
 import { canonicalizeMainSessionAlias } from "../../config/sessions/main-session.js";
 import { mergeSqliteSessionEntries } from "../../config/sessions/session-entries.sqlite.js";
-import { replaceSqliteSessionTranscriptEvents } from "../../config/sessions/transcript-store.sqlite.js";
+import { mergeSqliteSessionTranscriptEvents } from "../../config/sessions/transcript-store.sqlite.js";
 import type { SessionScope } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { CRESTODIAN_AUDIT_NAMESPACE, CRESTODIAN_AUDIT_OWNER_ID } from "../../crestodian/audit.js";
@@ -39,12 +39,12 @@ import {
   CRESTODIAN_RESCUE_PENDING_OWNER_ID,
   isRescuePendingOperation,
 } from "../../crestodian/rescue-pending-state.js";
+import { resolveRequiredHomeDir } from "../../infra/home-dir.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../../infra/kysely-sync.js";
 import { requireNodeSqlite } from "../../infra/node-sqlite.js";
 import { normalizeConversationRef } from "../../infra/outbound/session-binding-normalization.js";
 import type { SessionBindingRecord } from "../../infra/outbound/session-binding.types.js";
 import { isWithinDir } from "../../infra/path-safety.js";
-import { resolveRequiredHomeDir } from "../../infra/home-dir.js";
 import {
   buildAgentMainSessionKey,
   DEFAULT_AGENT_ID,
@@ -320,20 +320,30 @@ function importLegacyTranscriptFileToSqlite(params: {
   sourcePath: string;
   agentId: string;
   env?: NodeJS.ProcessEnv;
-}): { imported: number; sessionId: string } {
+}): { imported: number; deduped: number; sessionId: string } {
   const events = parseJsonlEvents(params.sourcePath) as TranscriptEntry[];
+  const header = events.find((event): event is TranscriptEntry & { version?: unknown } => {
+    return event.type === "session";
+  });
+  const legacyReplayFingerprintDedupe = typeof header?.version !== "number" || header.version < 2;
   migrateLegacyTranscriptEntries(events);
   const sessionId = resolveSessionIdFromTranscriptEvents(events);
   if (!sessionId) {
+    try {
+      fs.renameSync(params.sourcePath, `${params.sourcePath}.legacy-no-header-${Date.now()}`);
+    } catch {
+      // Best effort. Leave the warning below if quarantine fails.
+    }
     throw new Error(`Transcript missing session header: ${params.sourcePath}`);
   }
-  replaceSqliteSessionTranscriptEvents({
+  const result = mergeSqliteSessionTranscriptEvents({
     agentId: params.agentId,
     sessionId,
     events,
     env: params.env,
+    legacyReplayFingerprintDedupe,
   });
-  return { imported: events.length, sessionId };
+  return { imported: result.merged, deduped: result.skipped, sessionId };
 }
 
 function getDoctorSessionMigrationSurfaces(): DoctorSessionMigrationSurface[] {
@@ -2841,8 +2851,12 @@ async function migrateLegacySessions(
         env: detected.env,
       });
       fs.rmSync(from, { force: true });
+      const detail =
+        imported.deduped > 0
+          ? `(${imported.imported} new + ${imported.deduped} already-present)`
+          : `(${imported.imported} event(s))`;
       changes.push(
-        `Imported ${entry.name} transcript (${imported.imported} event(s)) into SQLite for agent ${detected.targetAgentId}`,
+        `Imported ${entry.name} transcript ${detail} into SQLite for agent ${detected.targetAgentId}`,
       );
     } catch (err) {
       warnings.push(`Failed importing transcript ${from}: ${String(err)}`);
@@ -2863,8 +2877,12 @@ async function migrateLegacySessions(
           env: detected.env,
         });
         fs.rmSync(transcriptPath, { force: true });
+        const detail =
+          imported.deduped > 0
+            ? `(${imported.imported} new + ${imported.deduped} already-present)`
+            : `(${imported.imported} event(s))`;
         changes.push(
-          `Imported canonical ${entry.name} transcript (${imported.imported} event(s)) into SQLite for agent ${agentStore.agentId}`,
+          `Imported canonical ${entry.name} transcript ${detail} into SQLite for agent ${agentStore.agentId}`,
         );
       } catch (err) {
         warnings.push(`Failed importing transcript ${transcriptPath}: ${String(err)}`);

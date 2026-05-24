@@ -80,4 +80,34 @@ describe("legacy session transcript migration", () => {
     expect((entries[0] as SessionHeader).version).toBe(CURRENT_SESSION_VERSION);
     expect(entries[1]).toMatchObject({ id: "entry-1", parentId: null });
   });
+
+  test("generates stable ids for v1 entries across repeated imports", () => {
+    const createEntries = (): TranscriptEntry[] => [
+      {
+        type: "session",
+        id: "session-1",
+        timestamp: "2026-05-06T00:00:00.000Z",
+        cwd: "/tmp/work",
+      } as SessionHeader,
+      {
+        type: "message",
+        timestamp: "2026-05-06T00:00:01.000Z",
+        message: { role: "user", content: "hello", timestamp: 1 },
+      } as SessionEntry,
+      {
+        type: "message",
+        timestamp: "2026-05-06T00:00:02.000Z",
+        message: { role: "assistant", content: "hi", timestamp: 2 },
+      } as SessionEntry,
+    ];
+    const first = createEntries();
+    const second = createEntries();
+
+    migrateLegacyTranscriptEntries(first);
+    migrateLegacyTranscriptEntries(second);
+
+    expect(first.slice(1).map((entry) => (entry as SessionEntry).id)).toEqual(
+      second.slice(1).map((entry) => (entry as SessionEntry).id),
+    );
+  });
 });

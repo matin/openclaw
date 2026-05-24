@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { withProgress } from "../../cli/progress.js";
 import type { ProgressReporter } from "../../cli/progress.js";
 import { resolveStateDir } from "../../config/paths.js";
@@ -23,6 +24,10 @@ export async function createPreMigrationBackup(opts: {
   output?: string;
 }): Promise<string | undefined> {
   try {
+    const output = opts.output ?? path.join(path.dirname(resolveStateDir()), "openclaw-backups");
+    if (!opts.output) {
+      await fs.mkdir(output, { recursive: true });
+    }
     const result = await backupCreateCommand(
       {
         log() {},
@@ -32,7 +37,8 @@ export async function createPreMigrationBackup(opts: {
         },
       },
       {
-        output: opts.output,
+        output,
+        includeWorkspace: false,
         verify: true,
       },
     );

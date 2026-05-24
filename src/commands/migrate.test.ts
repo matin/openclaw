@@ -263,6 +263,7 @@ describe("migrateApplyCommand", () => {
 
   beforeEach(async () => {
     await fs.rm("/tmp/openclaw-migrate-command-test", { force: true, recursive: true });
+    await fs.rm("/tmp/openclaw-backups", { force: true, recursive: true });
     Object.defineProperty(process.stdin, "isTTY", {
       configurable: true,
       value: false,
@@ -288,6 +289,7 @@ describe("migrateApplyCommand", () => {
       value: originalIsTty,
     });
     await fs.rm("/tmp/openclaw-migrate-command-test", { force: true, recursive: true });
+    await fs.rm("/tmp/openclaw-backups", { force: true, recursive: true });
     vi.clearAllMocks();
   });
 
@@ -1083,7 +1085,12 @@ describe("migrateApplyCommand", () => {
 
     const backupCall = mockCall(mocks.backupCreateCommand);
     expect(typeof (backupCall?.[0] as { log?: unknown } | undefined)?.log).toBe("function");
-    expect(backupCall?.[1]).toStrictEqual({ output: undefined, verify: true });
+    expect(backupCall?.[1]).toStrictEqual({
+      output: "/tmp/openclaw-backups",
+      includeWorkspace: false,
+      verify: true,
+    });
+    expect((await fs.stat("/tmp/openclaw-backups")).isDirectory()).toBe(true);
     const applyContext = firstApplyContext();
     expect(applyContext.backupPath).toBe("/tmp/openclaw-backup.tgz");
     expect(String(applyContext.reportDir)).toContain("/migration/hermes/");

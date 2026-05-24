@@ -20,6 +20,9 @@ const mocks = vi.hoisted(() => ({
   logConfigUpdated: vi.fn(),
   shortenHomePath: vi.fn((p: string) => p),
   formatCliCommand: vi.fn((cmd: string) => cmd),
+  createPreMigrationBackup: vi.fn(async () => "/tmp/openclaw-backup.tgz"),
+  detectLegacyStateMigrations: vi.fn(),
+  runLegacyStateMigrations: vi.fn(),
 }));
 
 vi.mock("../commands/doctor/shared/release-configured-plugin-installs.js", () => ({
@@ -54,6 +57,15 @@ vi.mock("../utils.js", () => ({
 
 vi.mock("../cli/command-format.js", () => ({
   formatCliCommand: mocks.formatCliCommand,
+}));
+
+vi.mock("../commands/migrate/apply.js", () => ({
+  createPreMigrationBackup: mocks.createPreMigrationBackup,
+}));
+
+vi.mock("../commands/doctor/state-migrations.js", () => ({
+  detectLegacyStateMigrations: mocks.detectLegacyStateMigrations,
+  runLegacyStateMigrations: mocks.runLegacyStateMigrations,
 }));
 
 function requireDoctorContribution(id: string) {
@@ -94,6 +106,12 @@ describe("doctor health contributions", () => {
       config: {},
       issues: [],
     });
+    mocks.createPreMigrationBackup.mockReset();
+    mocks.createPreMigrationBackup.mockResolvedValue("/tmp/openclaw-backup.tgz");
+    mocks.detectLegacyStateMigrations.mockReset();
+    mocks.detectLegacyStateMigrations.mockResolvedValue({ preview: [] });
+    mocks.runLegacyStateMigrations.mockReset();
+    mocks.runLegacyStateMigrations.mockResolvedValue({ changes: [], warnings: [] });
   });
 
   afterEach(() => {
@@ -125,6 +143,32 @@ describe("doctor health contributions", () => {
 
     expect(mocks.maybeRunConfiguredPluginInstallReleaseStep).not.toHaveBeenCalled();
     expect(mocks.note).not.toHaveBeenCalled();
+  });
+
+  it("marks doctor with a nonzero exit code when legacy state migration reports warnings", async () => {
+    const previousExitCode = process.exitCode;
+    mocks.detectLegacyStateMigrations.mockResolvedValue({
+      preview: ["- Legacy sessions detected"],
+    });
+    mocks.runLegacyStateMigrations.mockResolvedValue({
+      changes: ["migrated"],
+      warnings: ["trajectory import skipped"],
+    });
+    const contribution = requireDoctorContribution("doctor:legacy-state");
+    const ctx = {
+      cfg: {},
+      options: { nonInteractive: true },
+      prompter: buildDoctorPrompter(true),
+    } as Parameters<(typeof contribution)["run"]>[0];
+
+    try {
+      await contribution.run(ctx);
+
+      expect(process.exitCode).toBe(1);
+      expect(mocks.note).toHaveBeenCalledWith("trajectory import skipped", "Doctor warnings");
+    } finally {
+      process.exitCode = previousExitCode;
+    }
   });
 
   it("stamps release configured plugin installs after repair changes", async () => {

@@ -105,6 +105,7 @@ export async function runDoctorConfigPreflight(
     }
     if (stateDirResult.warnings.length > 0) {
       note(stateDirResult.warnings.map((entry) => `- ${entry}`).join("\n"), "Doctor warnings");
+      process.exitCode = 1;
     }
   }
 

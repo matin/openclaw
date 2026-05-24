@@ -22,6 +22,7 @@ import {
   loadSqliteSessionTranscriptBoundedEvents,
   loadSqliteSessionTranscriptEvents,
   loadSqliteSessionTranscriptTailEvents,
+  mergeSqliteSessionTranscriptEvents,
   recordSqliteSessionTranscriptSnapshot,
   replaceSqliteSessionTranscriptEvents,
 } from "./transcript-store.sqlite.js";
@@ -308,6 +309,263 @@ describe("SQLite session transcript store", () => {
       { id: "second", parentId: "first" },
     ]);
     expect(countSqliteSessionTranscriptDisplayMessages(scope)).toBe(0);
+  });
+
+  it("does not fingerprint-dedupe distinct nested tool call ids", () => {
+    const stateDir = createTempDir();
+    const scope = {
+      env: { OPENCLAW_STATE_DIR: stateDir },
+      agentId: "main",
+      sessionId: "session-1",
+    };
+
+    expect(
+      mergeSqliteSessionTranscriptEvents({
+        ...scope,
+        events: [
+          { type: "session", id: "session-1" },
+          {
+            type: "message",
+            id: "assistant-1",
+            parentId: null,
+            message: {
+              role: "assistant",
+              content: [{ type: "toolCall", id: "tool-call-1", name: "read" }],
+            },
+          },
+        ],
+      }),
+    ).toEqual({ merged: 2, skipped: 0 });
+
+    expect(
+      mergeSqliteSessionTranscriptEvents({
+        ...scope,
+        events: [
+          {
+            type: "message",
+            id: "assistant-2",
+            parentId: "assistant-1",
+            message: {
+              role: "assistant",
+              content: [{ type: "toolCall", id: "tool-call-2", name: "read" }],
+            },
+          },
+        ],
+      }),
+    ).toEqual({ merged: 1, skipped: 0 });
+
+    const messageIds = loadSqliteSessionTranscriptEvents(scope)
+      .map((entry) => entry.event as { id?: string })
+      .map((event) => event.id);
+    expect(messageIds).toEqual(["session-1", "assistant-1", "assistant-2"]);
+  });
+
+  it("dedupes merge imports by existing message idempotency keys", () => {
+    const stateDir = createTempDir();
+    const scope = {
+      env: { OPENCLAW_STATE_DIR: stateDir },
+      agentId: "main",
+      sessionId: "session-1",
+    };
+    replaceSqliteSessionTranscriptEvents({
+      ...scope,
+      events: [
+        { type: "session", id: "session-1" },
+        {
+          type: "message",
+          id: "existing-message",
+          parentId: null,
+          timestamp: "2026-04-25T00:00:01Z",
+          message: {
+            role: "user",
+            content: "hello",
+            idempotencyKey: "message-key-1",
+          },
+        },
+      ],
+    });
+
+    expect(
+      mergeSqliteSessionTranscriptEvents({
+        ...scope,
+        events: [
+          {
+            type: "message",
+            id: "replayed-message",
+            parentId: null,
+            timestamp: "2026-04-25T00:00:02Z",
+            message: {
+              role: "user",
+              content: "hello",
+              idempotencyKey: "message-key-1",
+            },
+          },
+        ],
+      }),
+    ).toEqual({ merged: 0, skipped: 1 });
+
+    const messageIds = loadSqliteSessionTranscriptEvents(scope)
+      .map((entry) => entry.event as { id?: string })
+      .map((event) => event.id);
+    expect(messageIds).toEqual(["session-1", "existing-message"]);
+  });
+
+  it("keeps repeated same-payload events from the same merge import", () => {
+    const stateDir = createTempDir();
+    const scope = {
+      env: { OPENCLAW_STATE_DIR: stateDir },
+      agentId: "main",
+      sessionId: "session-1",
+    };
+
+    expect(
+      mergeSqliteSessionTranscriptEvents({
+        ...scope,
+        events: [
+          { type: "session", id: "session-1" },
+          {
+            type: "message",
+            id: "same-1",
+            parentId: null,
+            message: { role: "user", content: "same" },
+          },
+          {
+            type: "message",
+            id: "same-2",
+            parentId: "same-1",
+            message: { role: "user", content: "same" },
+          },
+        ],
+      }),
+    ).toEqual({ merged: 3, skipped: 0 });
+
+    const messageIds = loadSqliteSessionTranscriptEvents(scope)
+      .map((entry) => entry.event as { id?: string })
+      .map((event) => event.id);
+    expect(messageIds).toEqual(["session-1", "same-1", "same-2"]);
+  });
+
+  it("keeps repeated same-payload replay events after an id match", () => {
+    const stateDir = createTempDir();
+    const scope = {
+      env: { OPENCLAW_STATE_DIR: stateDir },
+      agentId: "main",
+      sessionId: "session-1",
+    };
+    replaceSqliteSessionTranscriptEvents({
+      ...scope,
+      events: [
+        { type: "session", id: "session-1" },
+        {
+          type: "message",
+          id: "same-1",
+          parentId: null,
+          message: { role: "user", content: "same" },
+        },
+      ],
+    });
+
+    expect(
+      mergeSqliteSessionTranscriptEvents({
+        ...scope,
+        events: [
+          {
+            type: "message",
+            id: "same-1",
+            parentId: null,
+            message: { role: "user", content: "same" },
+          },
+          {
+            type: "message",
+            id: "same-2",
+            parentId: "same-1",
+            message: { role: "user", content: "same" },
+          },
+        ],
+      }),
+    ).toEqual({ merged: 1, skipped: 1 });
+
+    const messageIds = loadSqliteSessionTranscriptEvents(scope)
+      .map((entry) => entry.event as { id?: string })
+      .map((event) => event.id);
+    expect(messageIds).toEqual(["session-1", "same-1", "same-2"]);
+  });
+
+  it("does not move session roots backwards during stale merge imports", () => {
+    const stateDir = createTempDir();
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    const scope = { env, agentId: "main", sessionId: "session-1" };
+    appendSqliteSessionTranscriptEvent({
+      ...scope,
+      event: { type: "session", id: "session-1" },
+      now: () => 200,
+    });
+
+    expect(
+      mergeSqliteSessionTranscriptEvents({
+        ...scope,
+        events: [
+          {
+            type: "message",
+            id: "legacy",
+            timestamp: "1970-01-01T00:00:00.100Z",
+            message: { role: "user", content: "old" },
+          },
+        ],
+      }),
+    ).toEqual({ merged: 0, skipped: 1 });
+
+    const agentDatabase = openOpenClawAgentDatabase({ env, agentId: "main" });
+    const db = getNodeSqliteKysely<TranscriptStoreTestDatabase>(agentDatabase.db);
+    expect(
+      executeSqliteQueryTakeFirstSync(
+        agentDatabase.db,
+        db.selectFrom("sessions").select(["updated_at"]).where("session_id", "=", "session-1"),
+      ),
+    ).toEqual({ updated_at: 200 });
+  });
+
+  it("skips new stale merge events to preserve the existing transcript tail", () => {
+    const stateDir = createTempDir();
+    const scope = {
+      env: { OPENCLAW_STATE_DIR: stateDir },
+      agentId: "main",
+      sessionId: "session-1",
+    };
+    appendSqliteSessionTranscriptEvent({
+      ...scope,
+      event: { type: "session", id: "session-1" },
+      now: () => 100,
+    });
+    appendSqliteSessionTranscriptEvent({
+      ...scope,
+      event: {
+        type: "message",
+        id: "live-tail",
+        parentId: null,
+        message: { role: "assistant", content: "live" },
+      },
+      now: () => 200,
+    });
+
+    expect(
+      mergeSqliteSessionTranscriptEvents({
+        ...scope,
+        events: [
+          {
+            type: "message",
+            id: "stale-branch",
+            timestamp: "1970-01-01T00:00:00.050Z",
+            message: { role: "user", content: "old" },
+          },
+        ],
+      }),
+    ).toEqual({ merged: 0, skipped: 1 });
+
+    const ids = loadSqliteSessionTranscriptEvents(scope)
+      .map((entry) => entry.event as { id?: string })
+      .map((event) => event.id);
+    expect(ids).toEqual(["session-1", "live-tail"]);
   });
 
   it("counts only displayable entries on parent-linked transcript branches", () => {

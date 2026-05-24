@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { CURRENT_SESSION_VERSION } from "../../../agents/transcript/session-transcript-format.js";
 import type {
   CompactionEntry,
@@ -8,15 +8,20 @@ import type {
 
 const MAX_LEGACY_JSONL_TRANSCRIPT_VERSION = 3;
 
-function generateSessionEntryId(ids: Set<string>): string {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const id = randomUUID().slice(0, 8);
+function generateSessionEntryId(ids: Set<string>, entry: TranscriptEntry, index: number): string {
+  const source = JSON.stringify({ index, entry });
+  const digest = createHash("sha256")
+    .update("openclaw-transcript-v1\n")
+    .update(source)
+    .digest("hex");
+  for (let offset = 0; offset < digest.length - 8; offset += 8) {
+    const id = digest.slice(offset, offset + 8);
     if (!ids.has(id)) {
       ids.add(id);
       return id;
     }
   }
-  const id = randomUUID();
+  const id = digest;
   ids.add(id);
   return id;
 }
@@ -24,12 +29,12 @@ function generateSessionEntryId(ids: Set<string>): string {
 function migrateV1ToV2(entries: TranscriptEntry[]): void {
   const ids = new Set<string>();
   let previousId: string | null = null;
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     if (entry.type === "session") {
       entry.version = 2;
       continue;
     }
-    entry.id = generateSessionEntryId(ids);
+    entry.id = generateSessionEntryId(ids, entry, index);
     entry.parentId = previousId;
     previousId = entry.id;
 
