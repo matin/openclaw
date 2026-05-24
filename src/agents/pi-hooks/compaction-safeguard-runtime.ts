@@ -15,6 +15,7 @@ export type CompactionSafeguardRuntimeValue = {
    */
   model?: Model<Api>;
   recentTurnsPreserve?: number;
+  postCompactionSections?: string[];
   qualityGuardEnabled?: boolean;
   qualityGuardMaxRetries?: number;
   /**

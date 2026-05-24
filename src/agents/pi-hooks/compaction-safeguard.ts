@@ -824,12 +824,16 @@ function extractLatestUserAsk(messages: AgentMessage[]): string | null {
 
 /**
  * Read and format critical workspace context for compaction summary.
- * Extracts "Session Startup" and "Red Lines" from AGENTS.md.
- * Falls back to legacy names "Every Session" and "Safety".
+ * Uses explicitly configured AGENTS.md section names only.
+ * The default "Session Startup" / "Red Lines" pair preserves the legacy
+ * "Every Session" / "Safety" fallback.
  * Limited to 2000 chars to avoid bloating the summary.
  */
-async function readWorkspaceContextForSummary(): Promise<string> {
+async function readWorkspaceContextForSummary(sectionNames?: string[]): Promise<string> {
   const MAX_SUMMARY_CONTEXT_CHARS = 2000;
+  if (!Array.isArray(sectionNames) || sectionNames.length === 0) {
+    return "";
+  }
   const workspaceDir = process.cwd();
   const agentsPath = path.join(workspaceDir, "AGENTS.md");
 
@@ -850,10 +854,13 @@ async function readWorkspaceContextForSummary(): Promise<string> {
         fs.closeSync(opened.fd);
       }
     })();
-    // Accept legacy section names ("Every Session", "Safety") as fallback
-    // for backward compatibility with older AGENTS.md templates.
-    let sections = extractSections(content, ["Session Startup", "Red Lines"]);
-    if (sections.length === 0) {
+    let sections = extractSections(content, sectionNames);
+    if (
+      sections.length === 0 &&
+      sectionNames.length === 2 &&
+      sectionNames.some((name) => name.trim().toLowerCase() === "session startup") &&
+      sectionNames.some((name) => name.trim().toLowerCase() === "red lines")
+    ) {
       sections = extractSections(content, ["Every Session", "Safety"]);
     }
 
@@ -981,7 +988,9 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           if (providerResult !== undefined) {
             // Provider succeeded — assemble suffix metadata and return.
             // No quality guard: the provider is trusted.
-            const workspaceContext = await readWorkspaceContextForSummary();
+            const workspaceContext = await readWorkspaceContextForSummary(
+              runtime?.postCompactionSections,
+            );
             const suffix = assembleSuffix({
               splitTurnSection,
               preservedTurnsSection,
@@ -1268,7 +1277,9 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
 
       // Cap the main history body first, then append split-turn context, preserved
       // turns, diagnostics, and workspace rules so they survive truncation.
-      const workspaceContext = await readWorkspaceContextForSummary();
+      const workspaceContext = await readWorkspaceContextForSummary(
+        runtime?.postCompactionSections,
+      );
       const suffix = assembleSuffix({
         splitTurnSection: lastSplitTurnSection,
         preservedTurnsSection,
