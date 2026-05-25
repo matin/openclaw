@@ -45,6 +45,7 @@ import { loadDevices, type DevicesState } from "./controllers/devices.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import {
   addExecApproval,
+  clearResolvedExecApprovalPrompt,
   parseExecApprovalRequested,
   parseExecApprovalResolved,
   parsePluginApprovalRequested,
@@ -115,6 +116,7 @@ type GatewayHost = {
   refreshSessionsAfterChat: Set<string>;
   sessionsLoading?: boolean;
   execApprovalQueue: ExecApprovalRequest[];
+  execApprovalBusy: boolean;
   execApprovalError: string | null;
   updateAvailable: UpdateAvailable | null;
   reconcileWebPushState?: () => Promise<void> | void;
@@ -161,7 +163,7 @@ function enqueueApprovalRequest(host: GatewayHost, entry: ExecApprovalRequest | 
 function removeResolvedApprovalRequest(host: GatewayHost, payload: unknown) {
   const resolved = parseExecApprovalResolved(payload);
   if (resolved) {
-    host.execApprovalQueue = removeExecApproval(host.execApprovalQueue, resolved.id);
+    clearResolvedExecApprovalPrompt(host, resolved.id);
   }
 }
 
