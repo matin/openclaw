@@ -7,6 +7,7 @@ import { withOwnedSessionTranscriptWrites } from "../../../config/sessions/trans
 import { normalizeStringEntries } from "../../../shared/string-normalization.js";
 import { isSessionWriteLockTimeoutError } from "../../session-write-lock-error.js";
 import type { acquireSessionWriteLock } from "../../session-write-lock.js";
+import { log } from "../logger.js";
 
 type SessionLock = Awaited<ReturnType<typeof acquireSessionWriteLock>>;
 type AcquireSessionWriteLock = typeof acquireSessionWriteLock;
@@ -484,21 +485,70 @@ function readSessionFileFingerprintSync(sessionFile: string): SessionFileFingerp
   }
 }
 
+// A wedged turn can leave `_agentEventQueue` pending forever. Because every
+// session-write-lock release path funnels through this helper — the in-loop
+// waits in the embedded run and the cleanup-time acquireForCleanup — an unbounded
+// wait here pins the session write lock until the maxHoldMs watchdog (~17min),
+// orphaning it and deadlocking in-process contenders such as the background media
+// completion-wake (which dead-times-out at 60s and fails delivery). Bound the wait
+// so the lock is always released within a bounded window. tulgey #195.
+const SESSION_EVENT_QUEUE_WAIT_TIMEOUT_MS = (() => {
+  const raw = Number.parseInt(process.env.OPENCLAW_SESSION_EVENT_QUEUE_WAIT_TIMEOUT_MS ?? "", 10);
+  if (Number.isFinite(raw) && raw > 0) {
+    return raw;
+  }
+  return process.env.OPENCLAW_TEST_FAST === "1" ? 250 : 5_000;
+})();
+
+// Resolves true if the queue settled, false if the timeout elapsed first.
+async function awaitSessionEventQueueWithTimeout(
+  queue: PromiseLike<unknown>,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (timeoutMs <= 0) {
+    return false;
+  }
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve(queue).then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 async function waitForSessionEventQueue(session: unknown): Promise<void> {
   const owner = session as SessionEventQueueOwner;
+  const deadlineMs = Date.now() + SESSION_EVENT_QUEUE_WAIT_TIMEOUT_MS;
   for (let attempts = 0; attempts < 5; attempts += 1) {
     const queue = owner?.["_agentEventQueue"];
     if (!queue || typeof queue.then !== "function") {
       return;
     }
-    await Promise.resolve(queue).catch(() => {});
+    const drained = await awaitSessionEventQueueWithTimeout(queue, deadlineMs - Date.now());
+    if (!drained) {
+      log.warn(
+        `session event queue did not drain within ${SESSION_EVENT_QUEUE_WAIT_TIMEOUT_MS}ms; ` +
+          `proceeding to avoid pinning the session write lock on a wedged turn (tulgey #195)`,
+      );
+      return;
+    }
     if (owner?.["_agentEventQueue"] === queue) {
       return;
     }
   }
   const queue = owner?.["_agentEventQueue"];
   if (queue && typeof queue.then === "function") {
-    await Promise.resolve(queue).catch(() => {});
+    await awaitSessionEventQueueWithTimeout(queue, deadlineMs - Date.now());
   }
 }
 

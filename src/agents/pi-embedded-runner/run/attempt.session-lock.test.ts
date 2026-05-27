@@ -234,6 +234,46 @@ describe("embedded attempt session lock lifecycle", () => {
     expect(events).toEqual(["acquire-1", "release", "events-drained", "acquire-2", "release"]);
   });
 
+  it("does not pin the session lock when the Pi event queue never drains (tulgey #195)", async () => {
+    // Reproduces the #195 deadlock: a turn interrupted via sessions_yield can leave
+    // `_agentEventQueue` pending forever. Without a bounded wait, acquireForCleanup
+    // (and every other release path that funnels through waitForSessionEventQueue)
+    // blocks until the maxHoldMs watchdog (~17min), orphaning the session write lock
+    // and dead-locking the background media completion-wake. The bounded wait must
+    // let cleanup proceed and release the lock.
+    const events: string[] = [];
+    const session = {
+      // Never resolves — models a wedged turn whose event queue won't drain.
+      _agentEventQueue: new Promise<void>(() => {}),
+    };
+    let acquireCount = 0;
+    const acquireSessionWriteLock = vi.fn(async () => {
+      acquireCount += 1;
+      events.push(`acquire-${acquireCount}`);
+      return {
+        release: vi.fn(async () => {
+          events.push("release");
+        }),
+      };
+    });
+
+    const controller = await createEmbeddedAttemptSessionLockController({
+      acquireSessionWriteLock,
+      lockOptions,
+    });
+    await controller.releaseForPrompt();
+
+    const start = Date.now();
+    const cleanupLock = await controller.acquireForCleanup({ session });
+    await cleanupLock.release();
+    const elapsedMs = Date.now() - start;
+
+    // Cleanup completed and released the lock despite the wedged queue.
+    expect(events).toEqual(["acquire-1", "release", "acquire-2", "release"]);
+    // Bounded: nowhere near the 300_000ms maxHold the watchdog would otherwise wait.
+    expect(elapsedMs).toBeLessThan(10_000);
+  }, 20_000);
+
   it("rejects post-prompt writes when another owner advances the session file", async () => {
     const sessionFile = await createTempSessionFile();
     const release = vi.fn(async () => {});
