@@ -457,7 +457,11 @@ export function buildGoogleVideoGenerationProvider(): VideoGenerationProvider {
       const durationSeconds = resolveDurationSeconds(req.durationSeconds);
       const model = normalizeOptionalString(req.model) || DEFAULT_GOOGLE_VIDEO_MODEL;
       const aspectRatio = resolveAspectRatio({ aspectRatio: req.aspectRatio, size: req.size });
-      const resolution = resolveResolution({ resolution: req.resolution, size: req.size });
+      const resolution =
+        resolveResolution({ resolution: req.resolution, size: req.size }) ??
+        // Default unspecified requests to 1080p. Veo 3.x only supports 1080p at
+        // 16:9, so leave portrait (9:16) at the Veo default (720p).
+        (aspectRatio === "9:16" ? undefined : "1080p");
       const hasReferenceInputs =
         (req.inputImages?.length ?? 0) > 0 || (req.inputVideos?.length ?? 0) > 0;
       const deadline = createProviderOperationDeadline({
