@@ -1,7 +1,7 @@
 import path from "node:path";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { assertNoWindowsNetworkPath, safeFileURLToPath } from "../../../infra/local-file-access.js";
-import type { ImageContent } from "../../../llm/types.js";
+import type { AudioContent, ImageContent } from "../../../llm/types.js";
 import { resolveMediaReferenceLocalPath } from "../../../media/media-reference.js";
 import type { PromptImageOrderEntry } from "../../../media/prompt-image-order.js";
 import { loadWebMedia } from "../../../media/web-media.js";
@@ -34,6 +34,28 @@ const IMAGE_EXTENSION_NAMES = [
 const IMAGE_EXTENSIONS = new Set<string>();
 for (const ext of IMAGE_EXTENSION_NAMES) {
   IMAGE_EXTENSIONS.add(`.${ext}`);
+}
+
+/**
+ * Common audio file extensions for detection.
+ */
+const AUDIO_EXTENSION_NAMES = [
+  "ogg",
+  "opus",
+  "mp3",
+  "m4a",
+  "wav",
+  "webm",
+  "flac",
+  "aac",
+  "wma",
+  "aiff",
+  "alac",
+  "oga",
+] as const;
+const AUDIO_EXTENSIONS = new Set<string>();
+for (const ext of AUDIO_EXTENSION_NAMES) {
+  AUDIO_EXTENSIONS.add(`.${ext}`);
 }
 const IMAGE_EXTENSION_PATTERN = IMAGE_EXTENSION_NAMES.join("|");
 const MEDIA_ATTACHED_PATH_REGEX_SOURCE =
@@ -642,4 +664,231 @@ export async function detectAndLoadPromptImages(params: {
     loadedCount,
     skippedCount,
   };
+}
+
+/**
+ * Checks if a file extension indicates an audio file.
+ */
+function isAudioExtension(filePath: string): boolean {
+  const ext = normalizeLowercaseStringOrEmpty(path.extname(filePath));
+  return AUDIO_EXTENSIONS.has(ext);
+}
+
+/**
+ * Checks if a model can accept native audio input.
+ *
+ * True when the model advertises "audio" in its input capability array, or
+ * (for Google providers) when the Gemini major version is >= 3, since those
+ * models accept native multimodal audio even when the capability array hasn't
+ * been updated to list it explicitly.
+ *
+ * @param model The model object with provider/id/input metadata
+ * @returns True if the model supports native audio input
+ */
+export function modelSupportsAudioInput(model: {
+  provider?: string;
+  id?: string;
+  input?: string[];
+}): boolean {
+  if (model.input?.includes("audio")) {
+    return true;
+  }
+  const provider = model.provider;
+  if (provider === "google" || provider === "google-vertex") {
+    const id = normalizeLowercaseStringOrEmpty(model.id ?? "");
+    const match = id.match(/^gemini(?:-live)?-(\d+)/);
+    if (match) {
+      return Number(match[1]) >= 3;
+    }
+  }
+  return false;
+}
+
+/**
+ * Detects audio references in a user prompt.
+ *
+ * Mirrors {@link detectImageReferences} but restricts matches to audio
+ * attachments so image and audio detection stay independent:
+ * - Gateway claim-check URIs: [media attached: media://inbound/<id> (audio/...)]
+ * - Audio file paths: /path/to/voice.ogg
+ *
+ * @param prompt The user prompt text to scan
+ * @returns Array of detected audio references
+ */
+export function detectAudioReferences(prompt: string): DetectedImageRef[] {
+  const refs: DetectedImageRef[] = [];
+  const seen = new Set<string>();
+
+  MEDIA_ATTACHED_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = MEDIA_ATTACHED_PATTERN.exec(prompt)) !== null) {
+    const content = match[1];
+
+    // Skip "[media attached: N files]" header lines
+    if (/^\d+\s+files?$/i.test(content.trim())) {
+      continue;
+    }
+
+    // Gateway claim-check URI (media://inbound/<id>). Only treat as audio when
+    // the bracket explicitly declares an audio MIME type or the id carries an
+    // audio extension — otherwise an image URI would be misclassified.
+    const mediaUriMatch = content.match(MEDIA_URI_REGEX);
+    if (mediaUriMatch) {
+      const id = mediaUriMatch[1];
+      const isAudio = /\(audio\//i.test(content) || isAudioExtension(id);
+      if (!isAudio) {
+        continue;
+      }
+      const uri = `media://inbound/${id}`;
+      const dedupeKey = normalizeRefForDedupe(uri);
+      if (!seen.has(dedupeKey)) {
+        seen.add(dedupeKey);
+        refs.push({ raw: uri, type: "media-uri", resolved: uri });
+      }
+      continue;
+    }
+
+    // Otherwise extract the leading path token and keep it only when it has an
+    // audio extension.
+    const pathToken = content.split(/[(|]/)[0]?.trim();
+    if (!pathToken || !isAudioExtension(pathToken)) {
+      continue;
+    }
+    if (pathToken.startsWith("http://") || pathToken.startsWith("https://")) {
+      continue;
+    }
+    try {
+      assertNoWindowsNetworkPath(pathToken, "Audio path");
+    } catch {
+      continue;
+    }
+    const resolved = pathToken.startsWith("~") ? resolveUserPath(pathToken) : pathToken;
+    const dedupeKey = normalizeRefForDedupe(resolved);
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+    seen.add(dedupeKey);
+    refs.push({ raw: pathToken, type: "path", resolved });
+  }
+
+  return refs;
+}
+
+/**
+ * Loads an audio file from a reference and returns it as AudioContent.
+ *
+ * Mirrors {@link loadImageFromRef} for path/sandbox resolution, but accepts
+ * only the "audio" media kind and performs no image sanitization.
+ *
+ * @param ref The detected audio reference
+ * @param workspaceDir The current workspace directory for resolving relative paths
+ * @param options Optional settings for sandbox and size limits
+ * @returns The loaded audio content, or null if loading failed
+ */
+export async function loadAudioFromRef(
+  ref: DetectedImageRef,
+  workspaceDir: string,
+  options?: {
+    maxBytes?: number;
+    workspaceOnly?: boolean;
+    sandbox?: { root: string; bridge: SandboxFsBridge };
+  },
+): Promise<AudioContent | null> {
+  try {
+    let targetPath = ref.resolved;
+
+    if (!options?.sandbox) {
+      targetPath = await resolveMediaReferenceLocalPath(targetPath);
+    }
+
+    if (options?.sandbox) {
+      try {
+        const resolved = await resolveSandboxedBridgeMediaPath({
+          sandbox: {
+            root: options.sandbox.root,
+            bridge: options.sandbox.bridge,
+            workspaceOnly: options.workspaceOnly,
+          },
+          mediaPath: targetPath,
+          inboundFallbackDir: "media/inbound",
+        });
+        targetPath = resolved.resolved;
+      } catch (err) {
+        log.debug(
+          `Native audio: sandbox validation failed for ${ref.resolved}: ${formatErrorMessage(err)}`,
+        );
+        return null;
+      }
+    } else if (!path.isAbsolute(targetPath)) {
+      targetPath = path.resolve(workspaceDir, targetPath);
+    }
+
+    const media = options?.sandbox
+      ? await loadWebMedia(targetPath, {
+          maxBytes: options.maxBytes,
+          sandboxValidated: true,
+          readFile: createSandboxBridgeReadFile({ sandbox: options.sandbox }),
+        })
+      : await loadWebMedia(
+          targetPath,
+          options?.workspaceOnly
+            ? { maxBytes: options.maxBytes, localRoots: [workspaceDir] }
+            : options?.maxBytes,
+        );
+
+    if (media.kind !== "audio") {
+      log.debug(`Native audio: not an audio file: ${targetPath} (got ${media.kind})`);
+      return null;
+    }
+
+    return {
+      type: "audio",
+      data: media.buffer.toString("base64"),
+      mimeType: media.contentType ?? "audio/ogg",
+    };
+  } catch (err) {
+    log.debug(`Native audio: failed to load ${ref.resolved}: ${formatErrorMessage(err)}`);
+    return null;
+  }
+}
+
+/**
+ * Detects and loads audio referenced in a prompt for models with native audio
+ * input capability.
+ *
+ * @param params Configuration for audio detection and loading
+ * @returns Object with loaded audio content for the current prompt
+ */
+export async function detectAndLoadPromptAudio(params: {
+  prompt: string;
+  workspaceDir: string;
+  model: { provider?: string; id?: string; input?: string[] };
+  maxBytes?: number;
+  workspaceOnly?: boolean;
+  sandbox?: { root: string; bridge: SandboxFsBridge };
+}): Promise<{ audio: AudioContent[] }> {
+  if (!modelSupportsAudioInput(params.model)) {
+    return { audio: [] };
+  }
+
+  const refs = detectAudioReferences(params.prompt);
+  if (refs.length === 0) {
+    return { audio: [] };
+  }
+
+  log.debug(`Native audio: detected ${refs.length} audio refs in prompt`);
+  const audio: AudioContent[] = [];
+  for (const ref of refs) {
+    const loaded = await loadAudioFromRef(ref, params.workspaceDir, {
+      maxBytes: params.maxBytes,
+      workspaceOnly: params.workspaceOnly,
+      sandbox: params.sandbox,
+    });
+    if (loaded) {
+      audio.push(loaded);
+      log.debug(`Native audio: loaded ${ref.type} ${ref.resolved}`);
+    }
+  }
+
+  return { audio };
 }

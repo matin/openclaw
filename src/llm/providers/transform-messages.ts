@@ -1,6 +1,7 @@
 import type {
   Api,
   AssistantMessage,
+  AudioContent,
   ImageContent,
   Message,
   Model,
@@ -12,11 +13,11 @@ import type {
 const NON_VISION_USER_IMAGE_PLACEHOLDER = "(image omitted: model does not support images)";
 const NON_VISION_TOOL_IMAGE_PLACEHOLDER = "(tool image omitted: model does not support images)";
 
-function replaceImagesWithPlaceholder(
-  content: (TextContent | ImageContent)[],
+function replaceImagesWithPlaceholder<T extends TextContent | ImageContent | AudioContent>(
+  content: T[],
   placeholder: string,
-): TextContent[] {
-  const result: TextContent[] = [];
+): Array<Exclude<T, ImageContent> | TextContent> {
+  const result: Array<Exclude<T, ImageContent> | TextContent> = [];
   let previousWasPlaceholder = false;
 
   for (const block of content) {
@@ -28,8 +29,11 @@ function replaceImagesWithPlaceholder(
       continue;
     }
 
-    result.push(block);
-    previousWasPlaceholder = block.text === placeholder;
+    // Non-image blocks (text, audio) pass through unchanged. Image downgrade is
+    // about vision support only; native audio support is gated separately.
+    const passthrough = block as Exclude<T, ImageContent>;
+    result.push(passthrough);
+    previousWasPlaceholder = block.type === "text" && block.text === placeholder;
   }
 
   return result;

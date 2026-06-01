@@ -247,9 +247,10 @@ export function resolvePromptSubmissionSkipReason(params: {
   prompt: string;
   messages: readonly unknown[];
   imageCount: number;
+  audioCount?: number;
   runtimeOnly?: boolean;
 }): PromptSubmissionSkipReason | null {
-  if (params.prompt.trim().length > 0 || params.imageCount > 0) {
+  if (params.prompt.trim().length > 0 || params.imageCount > 0 || (params.audioCount ?? 0) > 0) {
     return null;
   }
   return params.messages.some(hasVisiblePromptHistory)

@@ -12,6 +12,7 @@ import type {
   AnthropicMessagesCompat,
   Api,
   AssistantMessage,
+  AudioContent,
   CacheRetention,
   Context,
   ImageContent,
@@ -110,7 +111,7 @@ const fromClaudeCodeName = (name: string, tools?: Tool[]) => {
 /**
  * Convert content blocks to Anthropic API format
  */
-function convertContentBlocks(content: (TextContent | ImageContent)[]):
+function convertContentBlocks(content: (TextContent | ImageContent | AudioContent)[]):
   | string
   | Array<
       | { type: "text"; text: string }
@@ -123,14 +124,17 @@ function convertContentBlocks(content: (TextContent | ImageContent)[]):
           };
         }
     > {
+  // Anthropic does not accept native audio parts; drop them. Native audio
+  // ingestion is a Google-only path (see google-shared converter).
+  const renderable = content.filter((c): c is TextContent | ImageContent => c.type !== "audio");
   // If only text blocks, return as concatenated string for simplicity
-  const hasImages = content.some((c) => c.type === "image");
+  const hasImages = renderable.some((c) => c.type === "image");
   if (!hasImages) {
-    return sanitizeSurrogates(content.map((c) => (c as TextContent).text).join("\n"));
+    return sanitizeSurrogates(renderable.map((c) => (c as TextContent).text).join("\n"));
   }
 
   // If we have images, convert to content block array
-  const blocks = content.map((block) => {
+  const blocks = renderable.map((block) => {
     if (block.type === "text") {
       return {
         type: "text" as const,
@@ -1056,21 +1060,33 @@ function convertMessages(
           });
         }
       } else {
-        const blocks: ContentBlockParam[] = msg.content.map((item) => {
+        const blocks: ContentBlockParam[] = msg.content.flatMap((item): ContentBlockParam[] => {
           if (item.type === "text") {
-            return {
-              type: "text",
-              text: sanitizeSurrogates(item.text),
-            };
+            return [
+              {
+                type: "text",
+                text: sanitizeSurrogates(item.text),
+              },
+            ];
           }
-          return {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: item.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
-              data: item.data,
+          // Anthropic has no native audio part; drop audio (Google-only path).
+          if (item.type === "audio") {
+            return [];
+          }
+          return [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: item.mimeType as
+                  | "image/jpeg"
+                  | "image/png"
+                  | "image/gif"
+                  | "image/webp",
+                data: item.data,
+              },
             },
-          };
+          ];
         });
         const filteredBlocks = blocks.filter((b) => {
           if (b.type === "text") {

@@ -26,6 +26,7 @@ import { cleanupSessionResources } from "../../llm/session-resources.js";
 import { streamSimple } from "../../llm/stream.js";
 import type {
   AssistantMessage,
+  AudioContent,
   ImageContent,
   Message,
   Model,
@@ -242,6 +243,8 @@ export interface PromptOptions {
   expandPromptTemplates?: boolean;
   /** Image attachments */
   images?: ImageContent[];
+  /** Native audio attachments (multimodal models only) */
+  audio?: AudioContent[];
   /** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
   streamingBehavior?: "steer" | "followUp";
   /** Source of input for extension input event handlers. Defaults to "interactive". */
@@ -1192,9 +1195,14 @@ export class AgentSession {
       messages = [];
 
       // Add user message
-      const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: expandedText }];
+      const userContent: (TextContent | ImageContent | AudioContent)[] = [
+        { type: "text", text: expandedText },
+      ];
       if (currentImages) {
         userContent.push(...currentImages);
+      }
+      if (options?.audio) {
+        userContent.push(...options.audio);
       }
       messages.push({
         role: "user",

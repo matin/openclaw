@@ -159,6 +159,18 @@ export function createWebOnMessageHandler(params: {
       ) {
         return;
       }
+      // Native multimodal audio ingestion: when enabled, skip STT so the inbound
+      // [media attached: ... (audio/...)] note survives to the prompt and the
+      // agent's turn receives the audio as a native part (decided pre-turn in the
+      // embedded runner via modelSupportsAudioInput; STT remains the fallback when
+      // the flag is off / the model isn't multimodal / the bytes can't load).
+      // Gated on the config flag alone: the active model for this route isn't
+      // resolved in this WhatsApp extension, so operators only enable this flag on
+      // deployments whose agents run a multimodal (e.g. Gemini >= 3) model.
+      // Leaving preflightAudioTranscript undefined means STT was not attempted.
+      if (cfg.tools?.media?.audio?.nativeIngestion === true) {
+        return;
+      }
       if (cfg.messages?.statusReactions?.enabled === true) {
         statusReactionController = await createWhatsAppStatusReactionController({
           cfg,

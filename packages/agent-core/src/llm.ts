@@ -71,6 +71,12 @@ export interface ImageContent {
   mimeType: string;
 }
 
+export interface AudioContent {
+  type: "audio";
+  data: string;
+  mimeType: string;
+}
+
 export interface ToolCall {
   type: "toolCall";
   id: string;
@@ -99,7 +105,7 @@ export type StopReason = "stop" | "length" | "toolUse" | "aborted" | "error";
 
 export interface UserMessage {
   role: "user";
-  content: string | (TextContent | ImageContent)[];
+  content: string | (TextContent | ImageContent | AudioContent)[];
   timestamp: number;
 }
 
@@ -142,7 +148,7 @@ export interface Model<TApi extends Api = Api> {
   api: TApi;
   provider: string;
   baseUrl: string;
-  input: ("text" | "image")[];
+  input: ("text" | "image" | "audio")[];
   reasoning: boolean;
   thinkingLevelMap?: Partial<Record<ModelThinkingLevel, string | null>>;
   contextWindow: number;

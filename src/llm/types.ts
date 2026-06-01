@@ -220,6 +220,12 @@ export interface ImageContent {
   mimeType: string; // e.g., "image/jpeg", "image/png"
 }
 
+export interface AudioContent {
+  type: "audio";
+  data: string; // base64 encoded audio data
+  mimeType: string; // e.g., "audio/ogg", "audio/mpeg"
+}
+
 export interface ToolCall {
   type: "toolCall";
   id: string;
@@ -247,7 +253,7 @@ export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
 
 export interface UserMessage {
   role: "user";
-  content: string | (TextContent | ImageContent)[];
+  content: string | (TextContent | ImageContent | AudioContent)[];
   timestamp: number; // Unix timestamp in milliseconds
 }
 
@@ -531,7 +537,7 @@ export interface Model<TApi extends Api = Api> {
    * Missing keys use provider defaults. null marks a level as unsupported.
    */
   thinkingLevelMap?: ThinkingLevelMap;
-  input: ("text" | "image")[];
+  input: ("text" | "image" | "audio")[];
   cost: {
     input: number; // $/million tokens
     output: number; // $/million tokens
