@@ -465,9 +465,11 @@ describe("createWebOnMessageHandler audio preflight", () => {
     expect(events).not.toContain("stt");
     expect(processMessageMock).toHaveBeenCalledTimes(1);
     const processParams = mockObjectArg(processMessageMock, "processMessage");
-    // undefined transcript = STT not attempted; processMessage leaves the
-    // [media attached: ... (audio/...)] note intact for native ingestion.
-    expect(processParams.preflightAudioTranscript).toBeUndefined();
+    // null (not undefined) = STT intentionally skipped but marked attempted, so
+    // processMessage's internal STT fallback (gated on `=== undefined`) does NOT
+    // re-transcribe and strip the [media attached: ... (audio/...)] note before the
+    // agent's turn can ingest the audio natively.
+    expect(processParams.preflightAudioTranscript).toBeNull();
   });
 
   it("runs STT when native audio ingestion is disabled (fallback path)", async () => {

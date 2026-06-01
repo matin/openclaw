@@ -52,6 +52,7 @@ const AUDIO_EXTENSION_NAMES = [
   "aiff",
   "alac",
   "oga",
+  "caf",
 ] as const;
 const AUDIO_EXTENSIONS = new Set<string>();
 for (const ext of AUDIO_EXTENSION_NAMES) {
