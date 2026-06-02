@@ -31,6 +31,33 @@ const POLL_INTERVAL_MS = 10_000;
 const MAX_POLL_ATTEMPTS = 120;
 const GOOGLE_VIDEO_EMPTY_RESULT_MESSAGE =
   "Google video generation response missing generated videos";
+const GOOGLE_VIDEO_MODEL_ALIASES: Record<string, string> = {
+  "veo-2": "veo-2.0-generate-001",
+  "veo-2.0": "veo-2.0-generate-001",
+  "veo-3": "veo-3.1-generate-001",
+  "veo-3.1": "veo-3.1-generate-001",
+  "veo-3.1-fast": "veo-3.1-fast-generate-001",
+  "veo-3.1-generate-preview": "veo-3.1-generate-001",
+  "veo-3.1-fast-generate-preview": "veo-3.1-fast-generate-001",
+};
+
+async function resolveVertexOAuthToken(): Promise<string> {
+  try {
+    const res = await fetch(
+      "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+      {
+        headers: { "Metadata-Flavor": "Google" },
+      },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      if (data.access_token) return data.access_token;
+    }
+  } catch (e) {}
+  const { resolveGoogleVertexAuthorizedUserHeaders } = await import("./vertex-adc.js");
+  const headers = await resolveGoogleVertexAuthorizedUserHeaders(fetch);
+  return headers.Authorization.replace(/^Bearer\s+/i, "");
+}
 
 function resolveConfiguredGoogleVideoBaseUrl(req: VideoGenerationRequest): string | undefined {
   const configured = normalizeOptionalString(req.cfg?.models?.providers?.google?.baseUrl);
@@ -42,17 +69,27 @@ function resolveGoogleVideoRestBaseUrl(configuredBaseUrl?: string): string {
 }
 
 function resolveGoogleVideoRestModelPath(model: string): string {
+  return `models/${resolveGoogleVideoModel(model)}`;
+}
+
+function resolveGoogleVideoModel(model: string | undefined): string {
   const trimmed = normalizeOptionalString(model) || DEFAULT_GOOGLE_VIDEO_MODEL;
-  if (trimmed.startsWith("google/models/")) {
-    return trimmed.slice("google/".length);
+  let bare = trimmed;
+  if (bare.startsWith("google/models/")) {
+    bare = bare.slice("google/models/".length);
+  } else if (bare.startsWith("models/")) {
+    bare = bare.slice("models/".length);
+  } else if (bare.startsWith("google/")) {
+    bare = bare.slice("google/".length);
   }
-  if (trimmed.startsWith("models/")) {
-    return trimmed;
-  }
-  if (trimmed.startsWith("google/")) {
-    return `models/${trimmed.slice("google/".length)}`;
-  }
-  return `models/${trimmed}`;
+  return GOOGLE_VIDEO_MODEL_ALIASES[bare] ?? bare;
+}
+
+function resolveVertexVideoLocation(): string {
+  const configured =
+    normalizeOptionalString(process.env.GOOGLE_VERTEX_VIDEO_LOCATION) ||
+    normalizeOptionalString(process.env.GOOGLE_CLOUD_LOCATION);
+  return configured && configured !== "global" ? configured : "us-central1";
 }
 
 function parseVideoSize(size: string | undefined): { width: number; height: number } | undefined {
@@ -186,7 +223,7 @@ async function downloadGeneratedVideo(params: {
 
 function resolveGoogleGeneratedVideoDownloadUrl(params: {
   uri: string | undefined;
-  apiKey: string;
+  apiKey?: string;
   configuredBaseUrl?: string;
 }): string | undefined {
   const trimmed = normalizeOptionalString(params.uri);
@@ -216,7 +253,7 @@ function resolveGoogleGeneratedVideoDownloadUrl(params: {
   if (!allowedOrigins.has(url.origin)) {
     return undefined;
   }
-  if (!url.searchParams.has("key")) {
+  if (params.apiKey && !url.searchParams.has("key")) {
     url.searchParams.set("key", params.apiKey);
   }
   return url.toString();
@@ -224,7 +261,7 @@ function resolveGoogleGeneratedVideoDownloadUrl(params: {
 
 async function downloadGeneratedVideoFromUri(params: {
   uri: string | undefined;
-  apiKey: string;
+  apiKey?: string;
   configuredBaseUrl?: string;
   mimeType?: string;
   index: number;
@@ -283,6 +320,10 @@ function extractGoogleApiErrorCode(error: unknown): number | undefined {
 
 function extractGeneratedVideos(operation: unknown): Array<{ video?: unknown }> {
   const response = (operation as { response?: Record<string, unknown> }).response;
+  const videos = response?.videos;
+  if (Array.isArray(videos) && videos.length > 0) {
+    return videos.map((video) => ({ video }));
+  }
   const generatedVideos = response?.generatedVideos;
   if (Array.isArray(generatedVideos) && generatedVideos.length > 0) {
     return generatedVideos as Array<{ video?: unknown }>;
@@ -379,6 +420,9 @@ async function generateGoogleVideoViaRest(params: {
   durationSeconds?: number;
   aspectRatio?: "16:9" | "9:16";
   resolution?: "720p" | "1080p";
+  image?: { imageBytes: string; mimeType: string };
+  video?: { videoBytes: string; mimeType: string };
+  pollStyle?: "getOperation" | "fetchPredictOperation";
 }): Promise<unknown> {
   let operation = await requestGoogleVideoJson({
     url: `${params.baseUrl}/${resolveGoogleVideoRestModelPath(params.model)}:predictLongRunning`,
@@ -387,7 +431,27 @@ async function generateGoogleVideoViaRest(params: {
     deadline: params.deadline,
     stage: "create",
     body: {
-      instances: [{ prompt: params.prompt }],
+      instances: [
+        {
+          prompt: params.prompt,
+          ...(params.image
+            ? {
+                image: {
+                  bytesBase64Encoded: params.image.imageBytes,
+                  mimeType: params.image.mimeType,
+                },
+              }
+            : {}),
+          ...(params.video
+            ? {
+                video: {
+                  bytesBase64Encoded: params.video.videoBytes,
+                  mimeType: params.video.mimeType,
+                },
+              }
+            : {}),
+        },
+      ],
       parameters: {
         ...(typeof params.durationSeconds === "number"
           ? { durationSeconds: params.durationSeconds }
@@ -410,8 +474,26 @@ async function generateGoogleVideoViaRest(params: {
     if (typeof operationName !== "string" || !operationName) {
       throw new Error("Google video operation response missing name for polling");
     }
+    if (params.pollStyle === "fetchPredictOperation") {
+      operation = await requestGoogleVideoJson({
+        url: `${params.baseUrl}/${resolveGoogleVideoRestModelPath(params.model)}:fetchPredictOperation`,
+        method: "POST",
+        headers: params.headers,
+        deadline: params.deadline,
+        stage: "poll",
+        body: { operationName },
+      });
+      continue;
+    }
+    let pollUrl = `${params.baseUrl}/${operationName}`;
+    if (operationName.startsWith("projects/")) {
+      const originMatch = params.baseUrl.match(/^(https:\/\/[^/]+)/u);
+      if (originMatch?.[1]) {
+        pollUrl = `${originMatch[1]}/v1beta1/${operationName}`;
+      }
+    }
     operation = await requestGoogleVideoJson({
-      url: `${params.baseUrl}/${operationName}`,
+      url: pollUrl,
       method: "GET",
       headers: params.headers,
       deadline: params.deadline,
@@ -446,37 +528,64 @@ export function buildGoogleVideoGenerationProvider(): VideoGenerationProvider {
         agentDir: req.agentDir,
         store: req.authStore,
       });
-      if (!auth.apiKey) {
+
+      const isVertex =
+        process.env.GOOGLE_GENAI_USE_VERTEXAI === "true" ||
+        auth.apiKey === "gcp-vertex-credentials";
+
+      if (!isVertex && !auth.apiKey) {
         throw new Error("Google API key missing");
       }
-      const apiKey = auth.apiKey;
 
-      const configuredBaseUrl = resolveConfiguredGoogleVideoBaseUrl(req);
-      const restBaseUrl = resolveGoogleVideoRestBaseUrl(configuredBaseUrl);
-      const authHeaders = parseGeminiAuth(apiKey).headers;
+      const apiKey = auth.apiKey;
       const durationSeconds = resolveDurationSeconds(req.durationSeconds);
-      const model = normalizeOptionalString(req.model) || DEFAULT_GOOGLE_VIDEO_MODEL;
+      const model = resolveGoogleVideoModel(req.model);
       const aspectRatio = resolveAspectRatio({ aspectRatio: req.aspectRatio, size: req.size });
-      const resolution = resolveResolution({ resolution: req.resolution, size: req.size });
+      const resolution =
+        resolveResolution({ resolution: req.resolution, size: req.size }) ??
+        // Default unspecified requests to 1080p. Veo 3.x only supports 1080p at
+        // 16:9, so leave portrait (9:16) at the Veo default (720p).
+        (aspectRatio === "9:16" ? undefined : "1080p");
       const hasReferenceInputs =
         (req.inputImages?.length ?? 0) > 0 || (req.inputVideos?.length ?? 0) > 0;
       const deadline = createProviderOperationDeadline({
         timeoutMs: req.timeoutMs,
         label: "Google video generation",
       });
-      const client = createGoogleGenAI({
-        apiKey,
-        httpOptions: {
-          ...(configuredBaseUrl ? { baseUrl: configuredBaseUrl } : {}),
-          timeout: resolveProviderOperationTimeoutMs({
-            deadline,
-            defaultTimeoutMs: DEFAULT_TIMEOUT_MS,
-          }),
-        },
-      });
+
+      let restBaseUrl: string;
+      let authHeaders: Record<string, string>;
+      let client: GoogleGenAIClient | undefined;
+      let configuredBaseUrl: string | undefined;
+      let restPollStyle: "getOperation" | "fetchPredictOperation" = "getOperation";
+
+      if (isVertex) {
+        const token = await resolveVertexOAuthToken();
+        const project = process.env.GOOGLE_CLOUD_PROJECT || "casita-mb";
+        const location = resolveVertexVideoLocation();
+        restBaseUrl = `https://${location}-aiplatform.googleapis.com/v1/projects/${project}/locations/${location}/publishers/google`;
+        authHeaders = { Authorization: `Bearer ${token}` };
+        restPollStyle = "fetchPredictOperation";
+      } else {
+        configuredBaseUrl = resolveConfiguredGoogleVideoBaseUrl(req);
+        restBaseUrl = resolveGoogleVideoRestBaseUrl(configuredBaseUrl);
+        authHeaders = parseGeminiAuth(apiKey!).headers;
+        client = createGoogleGenAI({
+          apiKey: apiKey!,
+          httpOptions: {
+            ...(configuredBaseUrl ? { baseUrl: configuredBaseUrl } : {}),
+            timeout: resolveProviderOperationTimeoutMs({
+              deadline,
+              defaultTimeoutMs: DEFAULT_TIMEOUT_MS,
+            }),
+          },
+        });
+      }
+
       let usedRestFallback = false;
       let operation;
       try {
+        if (!client) throw new Error("Force rest fallback for Vertex");
         operation = await client.models.generateVideos({
           model,
           prompt: req.prompt,
@@ -489,7 +598,7 @@ export function buildGoogleVideoGenerationProvider(): VideoGenerationProvider {
           },
         });
       } catch (error) {
-        if (hasReferenceInputs || extractGoogleApiErrorCode(error) !== 404) {
+        if (!isVertex && (hasReferenceInputs || extractGoogleApiErrorCode(error) !== 404)) {
           throw error;
         }
         usedRestFallback = true;
@@ -502,10 +611,17 @@ export function buildGoogleVideoGenerationProvider(): VideoGenerationProvider {
           durationSeconds,
           aspectRatio,
           resolution,
+          image: resolveInputImage(req),
+          video: resolveInputVideo(req),
+          pollStyle: restPollStyle,
         });
       }
 
       if (!usedRestFallback) {
+        if (!client) {
+          throw new Error("Google video SDK client missing for SDK operation polling");
+        }
+        const sdkClient = client;
         let sdkOperation = operation as Awaited<
           ReturnType<GoogleGenAIClient["models"]["generateVideos"]>
         >;
@@ -518,7 +634,7 @@ export function buildGoogleVideoGenerationProvider(): VideoGenerationProvider {
           sdkOperation = await executeProviderOperationWithRetry({
             provider: "google",
             stage: "poll",
-            operation: () => client.operations.getVideosOperation({ operation: sdkOperation }),
+            operation: () => sdkClient.operations.getVideosOperation({ operation: sdkOperation }),
           });
         }
         operation = sdkOperation;
@@ -539,6 +655,9 @@ export function buildGoogleVideoGenerationProvider(): VideoGenerationProvider {
           durationSeconds,
           aspectRatio,
           resolution,
+          image: resolveInputImage(req),
+          video: resolveInputVideo(req),
+          pollStyle: restPollStyle,
         });
         generatedVideos = extractGeneratedVideos(operation);
       }
@@ -548,17 +667,26 @@ export function buildGoogleVideoGenerationProvider(): VideoGenerationProvider {
       const videos = await Promise.all(
         generatedVideos.map(async (entry, index) => {
           const inline = entry.video as
-            | { videoBytes?: string; uri?: string; mimeType?: string }
+            | {
+                videoBytes?: string;
+                bytesBase64Encoded?: string;
+                uri?: string;
+                gcsUri?: string;
+                mimeType?: string;
+              }
             | undefined;
-          if (inline?.videoBytes) {
+          const videoBytes =
+            normalizeOptionalString(inline?.videoBytes) ||
+            normalizeOptionalString(inline?.bytesBase64Encoded);
+          if (videoBytes) {
             return {
-              buffer: Buffer.from(inline.videoBytes, "base64"),
-              mimeType: normalizeOptionalString(inline.mimeType) || "video/mp4",
+              buffer: Buffer.from(videoBytes, "base64"),
+              mimeType: normalizeOptionalString(inline?.mimeType) || "video/mp4",
               fileName: `video-${index + 1}.mp4`,
             };
           }
           const directDownload = await downloadGeneratedVideoFromUri({
-            uri: inline?.uri,
+            uri: normalizeOptionalString(inline?.uri) || normalizeOptionalString(inline?.gcsUri),
             apiKey,
             configuredBaseUrl,
             mimeType: inline?.mimeType,
@@ -569,6 +697,11 @@ export function buildGoogleVideoGenerationProvider(): VideoGenerationProvider {
           }
           if (!inline) {
             throw new Error("Google generated video missing file handle");
+          }
+          if (!client) {
+            throw new Error(
+              "Google generated video response did not include inline bytes or an HTTPS download URI",
+            );
           }
           return await downloadGeneratedVideo({
             client,
