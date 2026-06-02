@@ -9,6 +9,7 @@ import { createUnsafeMountedSandbox } from "../../test-helpers/unsafe-mounted-sa
 import {
   detectAndLoadPromptAudio,
   detectAndLoadPromptImages,
+  detectAudioReferences,
   detectImageReferences,
   loadAudioFromRef,
   loadImageFromRef,
@@ -764,6 +765,55 @@ describe("loadAudioFromRef", () => {
       vi.unstubAllEnvs();
       await fs.rm(stateDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("detectAudioReferences", () => {
+  it("detects the gateway claim-check URI for inbound audio", () => {
+    expect(
+      detectAudioReferences("[media attached: media://inbound/voice.ogg (audio/ogg)]"),
+    ).toStrictEqual([
+      {
+        raw: "media://inbound/voice.ogg",
+        type: "media-uri",
+        resolved: "media://inbound/voice.ogg",
+      },
+    ]);
+  });
+
+  it("detects bare local audio paths outside attachment markup", () => {
+    expect(detectAudioReferences("listen to ./voice.ogg please")).toStrictEqual([
+      { raw: "./voice.ogg", type: "path", resolved: "./voice.ogg" },
+    ]);
+    expect(detectAudioReferences("transcribe /tmp/note.wav")).toStrictEqual([
+      { raw: "/tmp/note.wav", type: "path", resolved: "/tmp/note.wav" },
+    ]);
+  });
+
+  it("resolves ~ home audio paths", () => {
+    const [ref] = detectAudioReferences("play ~/memo.caf");
+    expect(ref.raw).toBe("~/memo.caf");
+    expect(ref.type).toBe("path");
+    expect(ref.resolved.endsWith("/memo.caf")).toBe(true);
+    expect(ref.resolved.startsWith("~")).toBe(false);
+  });
+
+  it("detects file:// audio URLs", () => {
+    const [ref] = detectAudioReferences("see file:///tmp/note.wav");
+    expect(ref.type).toBe("path");
+    expect(ref.resolved).toBe("/tmp/note.wav");
+  });
+
+  it("ignores non-audio paths and remote URLs", () => {
+    expect(detectAudioReferences("here is ./photo.png")).toHaveLength(0);
+    expect(detectAudioReferences("fetch https://example.com/voice.ogg")).toHaveLength(0);
+  });
+
+  it("does not misparse a media:// claim-check URI as a bare filesystem path", () => {
+    // The /inbound/voice.ogg segment must not surface as a second `path` ref.
+    expect(
+      detectAudioReferences("[media attached: media://inbound/voice.ogg (audio/ogg)]"),
+    ).toHaveLength(1);
   });
 });
 

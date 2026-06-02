@@ -75,6 +75,19 @@ const FILE_URL_PATTERN = new RegExp(FILE_URL_REGEX_SOURCE, "gi");
 const WINDOWS_DRIVE_PATH_PATTERN = new RegExp(WINDOWS_DRIVE_PATH_REGEX_SOURCE, "gi");
 const PATH_PATTERN = new RegExp(PATH_REGEX_SOURCE, "gi");
 
+// Audio-extension variants of the file-reference patterns. The image patterns
+// above bake in IMAGE_EXTENSION_PATTERN, so audio detection needs its own set
+// keyed on AUDIO_EXTENSION_NAMES; the path/URL shapes are otherwise identical.
+const AUDIO_EXTENSION_PATTERN = AUDIO_EXTENSION_NAMES.join("|");
+const AUDIO_FILE_URL_REGEX_SOURCE = "file://[^\\s<>\"'`\\]]+\\.(?:" + AUDIO_EXTENSION_PATTERN + ")";
+const AUDIO_WINDOWS_DRIVE_PATH_REGEX_SOURCE =
+  "(?:^|\\s|[\"'`(])([A-Za-z]:[\\\\/][^\\s\"'`()\\[\\]]*\\.(?:" + AUDIO_EXTENSION_PATTERN + "))";
+const AUDIO_PATH_REGEX_SOURCE =
+  "(?:^|\\s|[\"'`(])((\\.\\.?/|[~/])[^\\s\"'`()\\[\\]]*\\.(?:" + AUDIO_EXTENSION_PATTERN + "))";
+const AUDIO_FILE_URL_PATTERN = new RegExp(AUDIO_FILE_URL_REGEX_SOURCE, "gi");
+const AUDIO_WINDOWS_DRIVE_PATH_PATTERN = new RegExp(AUDIO_WINDOWS_DRIVE_PATH_REGEX_SOURCE, "gi");
+const AUDIO_PATH_PATTERN = new RegExp(AUDIO_PATH_REGEX_SOURCE, "gi");
+
 /**
  * Matches the opaque media URI written by the Gateway's claim-check offload:
  *   media://inbound/<uuid-or-id>
@@ -711,7 +724,8 @@ export function modelSupportsAudioInput(model: {
  * Mirrors {@link detectImageReferences} but restricts matches to audio
  * attachments so image and audio detection stay independent:
  * - Gateway claim-check URIs: [media attached: media://inbound/<id> (audio/...)]
- * - Audio file paths: /path/to/voice.ogg
+ * - file:// URLs: file:///tmp/note.wav
+ * - Audio file paths: /path/to/voice.ogg, ./memo.caf, ~/note.mp3, C:\audio\x.wav
  *
  * @param prompt The user prompt text to scan
  * @returns Array of detected audio references
@@ -720,7 +734,38 @@ export function detectAudioReferences(prompt: string): DetectedImageRef[] {
   const refs: DetectedImageRef[] = [];
   const seen = new Set<string>();
 
+  // Add a bare audio path reference (absolute, ./relative, ../parent, or ~/home)
+  // when it carries an audio extension. Mirrors detectImageReferences' addPathRef
+  // but gates on isAudioExtension and rejects Windows UNC/network paths.
+  const addAudioPathRef = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return;
+    }
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      return;
+    }
+    if (!isAudioExtension(trimmed)) {
+      return;
+    }
+    try {
+      assertNoWindowsNetworkPath(trimmed, "Audio path");
+    } catch {
+      return;
+    }
+    const resolved = trimmed.startsWith("~") ? resolveUserPath(trimmed) : trimmed;
+    const dedupeKey = normalizeRefForDedupe(resolved);
+    if (seen.has(dedupeKey)) {
+      return;
+    }
+    seen.add(dedupeKey);
+    refs.push({ raw: trimmed, type: "path", resolved });
+  };
+
   MEDIA_ATTACHED_PATTERN.lastIndex = 0;
+  AUDIO_FILE_URL_PATTERN.lastIndex = 0;
+  AUDIO_WINDOWS_DRIVE_PATH_PATTERN.lastIndex = 0;
+  AUDIO_PATH_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = MEDIA_ATTACHED_PATTERN.exec(prompt)) !== null) {
     const content = match[1];
@@ -749,27 +794,45 @@ export function detectAudioReferences(prompt: string): DetectedImageRef[] {
       continue;
     }
 
-    // Otherwise extract the leading path token and keep it only when it has an
-    // audio extension.
+    // Otherwise keep the leading path token when it has an audio extension.
     const pathToken = content.split(/[(|]/)[0]?.trim();
-    if (!pathToken || !isAudioExtension(pathToken)) {
-      continue;
+    if (pathToken) {
+      addAudioPathRef(pathToken);
     }
-    if (pathToken.startsWith("http://") || pathToken.startsWith("https://")) {
-      continue;
-    }
+  }
+
+  // file:// URLs (e.g. file:///tmp/note.wav) — loadAudioFromRef resolves them
+  // the same way it resolves bare paths.
+  while ((match = AUDIO_FILE_URL_PATTERN.exec(prompt)) !== null) {
+    const raw = match[0];
     try {
-      assertNoWindowsNetworkPath(pathToken, "Audio path");
+      const resolved = safeFileURLToPath(raw);
+      if (!isAudioExtension(resolved)) {
+        continue;
+      }
+      const dedupeKey = normalizeRefForDedupe(resolved);
+      if (seen.has(dedupeKey)) {
+        continue;
+      }
+      seen.add(dedupeKey);
+      refs.push({ raw, type: "path", resolved });
     } catch {
-      continue;
+      // Skip malformed file:// URLs
     }
-    const resolved = pathToken.startsWith("~") ? resolveUserPath(pathToken) : pathToken;
-    const dedupeKey = normalizeRefForDedupe(resolved);
-    if (seen.has(dedupeKey)) {
-      continue;
+  }
+
+  // Windows drive paths (e.g. C:\audio\note.wav).
+  while ((match = AUDIO_WINDOWS_DRIVE_PATH_PATTERN.exec(prompt)) !== null) {
+    if (match[1]) {
+      addAudioPathRef(match[1]);
     }
-    seen.add(dedupeKey);
-    refs.push({ raw: pathToken, type: "path", resolved });
+  }
+
+  // Bare file paths (absolute, ./relative, ../parent, ~/home) with an audio extension.
+  while ((match = AUDIO_PATH_PATTERN.exec(prompt)) !== null) {
+    if (match[1]) {
+      addAudioPathRef(match[1]);
+    }
   }
 
   return refs;
