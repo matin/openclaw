@@ -1,5 +1,11 @@
 import { runAgentLoop } from "../agent-loop.js";
-import { type AssistantMessage, type ImageContent, type Model, type UserMessage } from "../llm.js";
+import {
+  type AssistantMessage,
+  type AudioContent,
+  type ImageContent,
+  type Model,
+  type UserMessage,
+} from "../llm.js";
 import { type AgentCoreRuntimeDeps, resolveAgentCoreStreamFn } from "../runtime-deps.js";
 import type {
   AgentContext,
@@ -48,10 +54,19 @@ import {
   toError,
 } from "./types.js";
 
-function createUserMessage(text: string, images?: ImageContent[]): UserMessage {
-  const content: Array<{ type: "text"; text: string } | ImageContent> = [{ type: "text", text }];
+function createUserMessage(
+  text: string,
+  images?: ImageContent[],
+  audio?: AudioContent[],
+): UserMessage {
+  const content: Array<{ type: "text"; text: string } | ImageContent | AudioContent> = [
+    { type: "text", text },
+  ];
   if (images) {
     content.push(...images);
+  }
+  if (audio) {
+    content.push(...audio);
   }
   return { role: "user", content, timestamp: Date.now() };
 }
@@ -618,10 +633,10 @@ export class AgentHarness<
   private async executeTurn(
     turnState: AgentHarnessTurnState<TSkill, TPromptTemplate, TTool>,
     text: string,
-    options?: { images?: ImageContent[] },
+    options?: { images?: ImageContent[]; audio?: AudioContent[] },
   ): Promise<AssistantMessage> {
     let activeTurnState = turnState;
-    let messages: AgentMessage[] = [createUserMessage(text, options?.images)];
+    let messages: AgentMessage[] = [createUserMessage(text, options?.images, options?.audio)];
     if (this.nextTurnQueue.length > 0) {
       const queuedMessages = this.nextTurnQueue.splice(0);
       try {
@@ -697,7 +712,10 @@ export class AgentHarness<
     }
   }
 
-  async prompt(text: string, options?: { images?: ImageContent[] }): Promise<AssistantMessage> {
+  async prompt(
+    text: string,
+    options?: { images?: ImageContent[]; audio?: AudioContent[] },
+  ): Promise<AssistantMessage> {
     if (this.phase !== "idle") {
       throw new AgentHarnessError("busy", "AgentHarness is busy");
     }
@@ -761,24 +779,33 @@ export class AgentHarness<
     }
   }
 
-  async steer(text: string, options?: { images?: ImageContent[] }): Promise<void> {
+  async steer(
+    text: string,
+    options?: { images?: ImageContent[]; audio?: AudioContent[] },
+  ): Promise<void> {
     if (this.phase === "idle") {
       throw new AgentHarnessError("invalid_state", "Cannot steer while idle");
     }
-    this.steerQueue.push(createUserMessage(text, options?.images));
+    this.steerQueue.push(createUserMessage(text, options?.images, options?.audio));
     await this.emitQueueUpdate();
   }
 
-  async followUp(text: string, options?: { images?: ImageContent[] }): Promise<void> {
+  async followUp(
+    text: string,
+    options?: { images?: ImageContent[]; audio?: AudioContent[] },
+  ): Promise<void> {
     if (this.phase === "idle") {
       throw new AgentHarnessError("invalid_state", "Cannot follow up while idle");
     }
-    this.followUpQueue.push(createUserMessage(text, options?.images));
+    this.followUpQueue.push(createUserMessage(text, options?.images, options?.audio));
     await this.emitQueueUpdate();
   }
 
-  async nextTurn(text: string, options?: { images?: ImageContent[] }): Promise<void> {
-    this.nextTurnQueue.push(createUserMessage(text, options?.images));
+  async nextTurn(
+    text: string,
+    options?: { images?: ImageContent[]; audio?: AudioContent[] },
+  ): Promise<void> {
+    this.nextTurnQueue.push(createUserMessage(text, options?.images, options?.audio));
     await this.emitQueueUpdate();
   }
 

@@ -112,6 +112,11 @@ export type MediaUnderstandingConfig = MediaProviderRequestConfig & {
    * Default: '📝 "{transcript}"'
    */
   echoFormat?: string;
+  /**
+   * Feed inbound audio natively to multimodal models instead of transcribing;
+   * transcription stays as fallback. Default false.
+   */
+  nativeIngestion?: boolean;
 };
 
 export type LinkModelConfig = {

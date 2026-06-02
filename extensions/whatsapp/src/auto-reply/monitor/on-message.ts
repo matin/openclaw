@@ -186,6 +186,19 @@ export function createWebOnMessageHandler(params: {
         });
         ackAlreadySent = ackReaction !== null;
       }
+      // Native multimodal audio ingestion: when enabled, skip STT so the inbound
+      // [media attached: ... (audio/...)] note survives to the prompt and the agent's
+      // turn receives the audio as a native part (decided pre-turn in the embedded
+      // runner via modelSupportsAudioInput; STT stays the fallback when the flag is
+      // off / the model isn't multimodal). Set null (not undefined) so processMessage's
+      // internal STT fallback (which fires on `preflightAudioTranscript === undefined`)
+      // does not re-transcribe and strip the audio note. Gated on the config flag
+      // alone: the active model for this route isn't resolved in this extension, so
+      // operators only enable the flag on deployments running a multimodal model.
+      if (cfg.tools?.media?.audio?.nativeIngestion === true) {
+        preflightAudioTranscript = null;
+        return;
+      }
       try {
         const { transcribeFirstAudio } = await import("./audio-preflight.runtime.js");
         // transcribeFirstAudio returns undefined on failure/disabled; store null so

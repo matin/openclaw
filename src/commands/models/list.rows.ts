@@ -234,7 +234,7 @@ function toConfiguredProviderListModel(params: {
 function toListRowInput(input: readonly string[] | undefined): ListRowModel["input"] {
   const parsed = input?.filter(
     (item): item is ListRowModel["input"][number] =>
-      item === "text" || item === "image" || item === "document",
+      item === "text" || item === "image" || item === "document" || item === "audio",
   );
   return parsed?.length ? parsed : ["text"];
 }

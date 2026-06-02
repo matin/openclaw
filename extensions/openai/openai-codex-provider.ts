@@ -331,7 +331,7 @@ function withDefaultCodexContextMetadata(params: {
         : params.contextTokens;
   const input = params.model.input?.includes("image")
     ? params.model.input
-    : uniqueValues<"text" | "image">([...(params.model.input ?? ["text"]), "image"]);
+    : uniqueValues<"text" | "image" | "audio">([...(params.model.input ?? ["text"]), "image"]);
   return {
     ...params.model,
     input,

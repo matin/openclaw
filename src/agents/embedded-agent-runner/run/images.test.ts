@@ -7,10 +7,14 @@ import { resolvePreferredOpenClawTmpDir } from "../../../infra/tmp-openclaw-dir.
 import { createHostSandboxFsBridge } from "../../test-helpers/host-sandbox-fs-bridge.js";
 import { createUnsafeMountedSandbox } from "../../test-helpers/unsafe-mounted-sandbox.js";
 import {
+  detectAndLoadPromptAudio,
   detectAndLoadPromptImages,
+  detectAudioReferences,
   detectImageReferences,
+  loadAudioFromRef,
   loadImageFromRef,
   mergePromptAttachmentImages,
+  modelSupportsAudioInput,
   modelSupportsImages,
   splitPromptAndAttachmentRefs,
 } from "./images.js";
@@ -670,6 +674,205 @@ describe("detectAndLoadPromptImages", () => {
       expect(result.loadedCount).toBe(1);
       expect(result.skippedCount).toBe(0);
       expect(result.images).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// Minimal audio fixture: an Apple CAF container ("caff" magic bytes + padding)
+// sniffs as audio/x-caf, giving loadWebMedia an "audio" kind without bundling a
+// binary asset. PNG bytes reuse TINY_PNG_BASE64 for the non-audio negative case.
+const CAF_AUDIO_BYTES = Buffer.concat([Buffer.from("caff", "ascii"), Buffer.alloc(60)]);
+
+describe("modelSupportsAudioInput", () => {
+  it("returns true when model input includes audio", () => {
+    expect(modelSupportsAudioInput({ provider: "anthropic", input: ["text", "audio"] })).toBe(true);
+  });
+
+  it("returns true for Gemini >= 3 Google providers without an explicit audio capability", () => {
+    expect(modelSupportsAudioInput({ provider: "google-vertex", id: "gemini-3.5-flash" })).toBe(
+      true,
+    );
+    expect(modelSupportsAudioInput({ provider: "google", id: "gemini-3-pro" })).toBe(true);
+  });
+
+  it("returns false for Gemini < 3 Google providers", () => {
+    expect(modelSupportsAudioInput({ provider: "google", id: "gemini-2.0-flash" })).toBe(false);
+  });
+
+  it("returns false for non-Google providers without an audio capability", () => {
+    expect(modelSupportsAudioInput({ provider: "anthropic", id: "claude-3-opus" })).toBe(false);
+  });
+});
+
+describe("loadAudioFromRef", () => {
+  it("hydrates managed inbound audio media URIs", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-native-audio-uri-"));
+    const workspaceDir = path.join(stateDir, "workspace-agent");
+    const inboundDir = path.join(stateDir, "media", "inbound");
+    const mediaId = "voice-note.caf";
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(inboundDir, { recursive: true });
+    await fs.writeFile(path.join(inboundDir, mediaId), CAF_AUDIO_BYTES);
+    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+
+    try {
+      const audio = await loadAudioFromRef(
+        {
+          raw: `media://inbound/${mediaId}`,
+          type: "media-uri",
+          resolved: `media://inbound/${mediaId}`,
+        },
+        workspaceDir,
+        { workspaceOnly: true },
+      );
+
+      expect(audio?.type).toBe("audio");
+      expect(audio?.mimeType).toBe("audio/x-caf");
+      expect(audio?.data).toBe(CAF_AUDIO_BYTES.toString("base64"));
+    } finally {
+      vi.unstubAllEnvs();
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns null when loadWebMedia yields a non-audio kind", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-native-audio-nonaudio-"));
+    const workspaceDir = path.join(stateDir, "workspace-agent");
+    const inboundDir = path.join(stateDir, "media", "inbound");
+    // PNG bytes load as kind "image", which loadAudioFromRef must reject.
+    const mediaId = "not-audio.png";
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(inboundDir, { recursive: true });
+    await fs.writeFile(path.join(inboundDir, mediaId), Buffer.from(TINY_PNG_BASE64, "base64"));
+    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+
+    try {
+      const audio = await loadAudioFromRef(
+        {
+          raw: `media://inbound/${mediaId}`,
+          type: "media-uri",
+          resolved: `media://inbound/${mediaId}`,
+        },
+        workspaceDir,
+        { workspaceOnly: true },
+      );
+
+      expect(audio).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("detectAudioReferences", () => {
+  it("detects the gateway claim-check URI for inbound audio", () => {
+    expect(
+      detectAudioReferences("[media attached: media://inbound/voice.ogg (audio/ogg)]"),
+    ).toStrictEqual([
+      {
+        raw: "media://inbound/voice.ogg",
+        type: "media-uri",
+        resolved: "media://inbound/voice.ogg",
+      },
+    ]);
+  });
+
+  it("detects bare local audio paths outside attachment markup", () => {
+    expect(detectAudioReferences("listen to ./voice.ogg please")).toStrictEqual([
+      { raw: "./voice.ogg", type: "path", resolved: "./voice.ogg" },
+    ]);
+    expect(detectAudioReferences("transcribe /tmp/note.wav")).toStrictEqual([
+      { raw: "/tmp/note.wav", type: "path", resolved: "/tmp/note.wav" },
+    ]);
+  });
+
+  it("resolves ~ home audio paths", () => {
+    const [ref] = detectAudioReferences("play ~/memo.caf");
+    expect(ref.raw).toBe("~/memo.caf");
+    expect(ref.type).toBe("path");
+    expect(ref.resolved.endsWith("/memo.caf")).toBe(true);
+    expect(ref.resolved.startsWith("~")).toBe(false);
+  });
+
+  it("detects file:// audio URLs", () => {
+    const [ref] = detectAudioReferences("see file:///tmp/note.wav");
+    expect(ref.type).toBe("path");
+    expect(ref.resolved).toBe("/tmp/note.wav");
+  });
+
+  it("ignores non-audio paths and remote URLs", () => {
+    expect(detectAudioReferences("here is ./photo.png")).toHaveLength(0);
+    expect(detectAudioReferences("fetch https://example.com/voice.ogg")).toHaveLength(0);
+  });
+
+  it("does not misparse a media:// claim-check URI as a bare filesystem path", () => {
+    // The /inbound/voice.ogg segment must not surface as a second `path` ref.
+    expect(
+      detectAudioReferences("[media attached: media://inbound/voice.ogg (audio/ogg)]"),
+    ).toHaveLength(1);
+  });
+
+  it("classifies a claim-check URI as audio from the id extension alone, without an (audio/...) MIME", () => {
+    // store.ts appends a MIME-derived extension to the saved id, so inbound
+    // audio URIs end in .ogg/.caf/etc even when the bracket omits the MIME
+    // annotation (e.g. the gateway chat-attachments producer). The extension is
+    // the load-bearing discriminator; assert it fires on its own.
+    expect(detectAudioReferences("[media attached: media://inbound/voice.ogg]")).toStrictEqual([
+      {
+        raw: "media://inbound/voice.ogg",
+        type: "media-uri",
+        resolved: "media://inbound/voice.ogg",
+      },
+    ]);
+  });
+
+  it("keeps image claim-check URIs out of audio detection (image/audio stay independent)", () => {
+    // The discriminator is deliberate: unlike detectImageReferences (which
+    // accepts any media:// URI), audio detection must NOT swallow image URIs,
+    // or every inbound image would be misclassified as audio.
+    expect(detectAudioReferences("[media attached: media://inbound/photo.png]")).toHaveLength(0);
+    expect(
+      detectAudioReferences("[media attached: media://inbound/photo.png (image/png)]"),
+    ).toHaveLength(0);
+  });
+});
+
+describe("detectAndLoadPromptAudio", () => {
+  it("returns no audio when the model lacks audio input support", async () => {
+    const result = await detectAndLoadPromptAudio({
+      prompt: "[media attached: media://inbound/voice.ogg (audio/ogg) | http://x]",
+      workspaceDir: "/tmp",
+      model: { provider: "google", id: "gemini-2.0-flash" },
+    });
+
+    expect(result.audio).toHaveLength(0);
+  });
+
+  it("loads inbound audio attachments for multimodal models", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-native-audio-detect-"));
+    const workspaceDir = path.join(stateDir, "workspace-agent");
+    const inboundDir = path.join(stateDir, "media", "inbound");
+    const mediaId = "voice-note.caf";
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.mkdir(inboundDir, { recursive: true });
+    await fs.writeFile(path.join(inboundDir, mediaId), CAF_AUDIO_BYTES);
+    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+
+    try {
+      const result = await detectAndLoadPromptAudio({
+        prompt: `here is my voice note\n[media attached: media://inbound/${mediaId} (audio/x-caf)]`,
+        workspaceDir,
+        model: { provider: "google-vertex", id: "gemini-3-flash" },
+        workspaceOnly: true,
+      });
+
+      expect(result.audio).toHaveLength(1);
+      expect(result.audio[0].type).toBe("audio");
+      expect(result.audio[0].mimeType).toBe("audio/x-caf");
     } finally {
       vi.unstubAllEnvs();
       await fs.rm(stateDir, { recursive: true, force: true });
