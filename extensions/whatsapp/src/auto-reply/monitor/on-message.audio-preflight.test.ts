@@ -430,6 +430,85 @@ describe("createWebOnMessageHandler audio preflight", () => {
     });
   });
 
+  it("skips STT when native audio ingestion is enabled so the audio note survives to the prompt", async () => {
+    const handler = createWebOnMessageHandler({
+      cfg: {
+        tools: { media: { audio: { nativeIngestion: true } } },
+        channels: {
+          whatsapp: {
+            ackReaction: { enabled: true },
+          },
+        },
+      } as never,
+      verbose: false,
+      connectionId: "conn-1",
+      maxMediaBytes: 1024 * 1024,
+      groupHistoryLimit: 20,
+      groupHistories: new Map(),
+      groupMemberNames: new Map(),
+      echoTracker: makeEchoTracker() as never,
+      backgroundTasks: new Set(),
+      replyResolver: vi.fn() as never,
+      replyLogger: {
+        info: () => {},
+        warn: () => {},
+        debug: () => {},
+        error: () => {},
+      } as never,
+      baseMentionConfig: {} as never,
+      account: { authDir: "/tmp/auth", accountId: "default" },
+    });
+
+    await handler(makeAudioMsg());
+
+    expect(transcribeFirstAudioMock).not.toHaveBeenCalled();
+    expect(events).not.toContain("stt");
+    expect(processMessageMock).toHaveBeenCalledTimes(1);
+    const processParams = mockObjectArg(processMessageMock, "processMessage");
+    // null (not undefined) = STT intentionally skipped but marked attempted, so
+    // processMessage's internal STT fallback (gated on `=== undefined`) does NOT
+    // re-transcribe and strip the [media attached: ... (audio/...)] note before the
+    // agent's turn can ingest the audio natively.
+    expect(processParams.preflightAudioTranscript).toBeNull();
+  });
+
+  it("runs STT when native audio ingestion is disabled (fallback path)", async () => {
+    const handler = createWebOnMessageHandler({
+      cfg: {
+        tools: { media: { audio: { nativeIngestion: false } } },
+        channels: {
+          whatsapp: {
+            ackReaction: { enabled: true },
+          },
+        },
+      } as never,
+      verbose: false,
+      connectionId: "conn-1",
+      maxMediaBytes: 1024 * 1024,
+      groupHistoryLimit: 20,
+      groupHistories: new Map(),
+      groupMemberNames: new Map(),
+      echoTracker: makeEchoTracker() as never,
+      backgroundTasks: new Set(),
+      replyResolver: vi.fn() as never,
+      replyLogger: {
+        info: () => {},
+        warn: () => {},
+        debug: () => {},
+        error: () => {},
+      } as never,
+      baseMentionConfig: {} as never,
+      account: { authDir: "/tmp/auth", accountId: "default" },
+    });
+
+    await handler(makeAudioMsg());
+
+    expect(transcribeFirstAudioMock).toHaveBeenCalledTimes(1);
+    expect(events).toContain("stt");
+    const processParams = mockObjectArg(processMessageMock, "processMessage");
+    expect(processParams.preflightAudioTranscript).toBe("transcribed voice note");
+  });
+
   it("does not transcribe group voice when policy gating rejects before mention", async () => {
     applyGroupGatingMock.mockResolvedValueOnce({ shouldProcess: false });
     const handler = createWebOnMessageHandler({

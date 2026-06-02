@@ -949,20 +949,28 @@ export function convertMessages(
           content: sanitizeSurrogates(msg.content),
         });
       } else {
-        const content: ChatCompletionContentPart[] = msg.content.map(
-          (item): ChatCompletionContentPart => {
+        const content: ChatCompletionContentPart[] = msg.content.flatMap(
+          (item): ChatCompletionContentPart[] => {
             if (item.type === "text") {
-              return {
-                type: "text",
-                text: sanitizeSurrogates(item.text),
-              } satisfies ChatCompletionContentPartText;
+              return [
+                {
+                  type: "text",
+                  text: sanitizeSurrogates(item.text),
+                } satisfies ChatCompletionContentPartText,
+              ];
             }
-            return {
-              type: "image_url",
-              image_url: {
-                url: `data:${item.mimeType};base64,${item.data}`,
-              },
-            } satisfies ChatCompletionContentPartImage;
+            // OpenAI completions has no native audio part; drop audio.
+            if (item.type === "audio") {
+              return [];
+            }
+            return [
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:${item.mimeType};base64,${item.data}`,
+                },
+              } satisfies ChatCompletionContentPartImage,
+            ];
           },
         );
         if (content.length === 0) {

@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import os from "node:os";
-import { MAX_IMAGE_BYTES } from "@openclaw/media-core/constants";
+import { MAX_AUDIO_BYTES, MAX_IMAGE_BYTES } from "@openclaw/media-core/constants";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { isAcpRuntimeSpawnAvailable } from "../../../acp/runtime/availability.js";
@@ -429,7 +429,7 @@ import {
   installHistoryImagePruneContextTransform,
   pruneProcessedHistoryImages,
 } from "./history-image-prune.js";
-import { detectAndLoadPromptImages } from "./images.js";
+import { detectAndLoadPromptAudio, detectAndLoadPromptImages } from "./images.js";
 import {
   buildAttemptReplayMetadata,
   resolveSilentToolResultReplyPayload,
@@ -4014,6 +4014,23 @@ export async function runEmbeddedAttempt(
                     : undefined,
               });
 
+          // Detect and load audio referenced in the visible prompt for models
+          // with native audio input. Native ingestion is the path when
+          // transcription was gated off upstream; STT is the fallback.
+          const audioResult = skipPromptSubmission
+            ? { audio: [] }
+            : await detectAndLoadPromptAudio({
+                prompt: promptSubmission.prompt,
+                workspaceDir: effectiveWorkspace,
+                model: params.model,
+                maxBytes: MAX_AUDIO_BYTES,
+                workspaceOnly: effectiveFsWorkspaceOnly,
+                sandbox:
+                  sandbox?.enabled && sandbox?.fsBridge
+                    ? { root: sandbox.workspaceDir, bridge: sandbox.fsBridge }
+                    : undefined,
+              });
+
           if (!skipPromptSubmission) {
             cacheTrace?.recordStage("prompt:before", {
               prompt: promptForModel,
@@ -4049,6 +4066,7 @@ export async function runEmbeddedAttempt(
                 messages: activeSession.messages,
                 runtimeOnly: promptSubmission.runtimeOnly,
                 imageCount: imageResult.images.length,
+                audioCount: audioResult.audio.length,
               });
           if (promptSkipReason) {
             skipPromptSubmission = true;
@@ -4327,18 +4345,18 @@ export async function runEmbeddedAttempt(
                   message: runtimeContextMessageForCurrentTurn,
                 });
                 try {
-                  // Only pass images option if there are actually images to pass
-                  // This avoids potential issues with models that don't expect the images parameter
+                  // Only attach images/audio options when present so models
+                  // that don't expect those parameters aren't handed empties.
+                  const promptOptions: Parameters<typeof promptActiveSession>[1] = {
+                    preflightResult: armModelPromptTransform,
+                  };
                   if (imageResult.images.length > 0) {
-                    await promptActiveSession(promptForSession, {
-                      images: imageResult.images,
-                      preflightResult: armModelPromptTransform,
-                    });
-                  } else {
-                    await promptActiveSession(promptForSession, {
-                      preflightResult: armModelPromptTransform,
-                    });
+                    promptOptions.images = imageResult.images;
                   }
+                  if (audioResult.audio.length > 0) {
+                    promptOptions.audio = audioResult.audio;
+                  }
+                  await promptActiveSession(promptForSession, promptOptions);
                 } finally {
                   cleanupRuntimeContextMessage();
                 }

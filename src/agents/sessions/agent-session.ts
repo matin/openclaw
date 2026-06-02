@@ -26,6 +26,7 @@ import { cleanupSessionResources } from "../../llm/session-resources.js";
 import { streamSimple } from "../../llm/stream.js";
 import type {
   AssistantMessage,
+  AudioContent,
   ImageContent,
   Message,
   Model,
@@ -242,6 +243,8 @@ export interface PromptOptions {
   expandPromptTemplates?: boolean;
   /** Image attachments */
   images?: ImageContent[];
+  /** Native audio attachments (multimodal models only) */
+  audio?: AudioContent[];
   /** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
   streamingBehavior?: "steer" | "followUp";
   /** Source of input for extension input event handlers. Defaults to "interactive". */
@@ -1147,9 +1150,9 @@ export class AgentSession {
           );
         }
         if (options.streamingBehavior === "followUp") {
-          await this.queueFollowUp(expandedText, currentImages);
+          await this.queueFollowUp(expandedText, currentImages, options?.audio);
         } else {
-          await this.queueSteer(expandedText, currentImages);
+          await this.queueSteer(expandedText, currentImages, options?.audio);
         }
         preflightResult?.(true);
         return;
@@ -1192,9 +1195,14 @@ export class AgentSession {
       messages = [];
 
       // Add user message
-      const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: expandedText }];
+      const userContent: (TextContent | ImageContent | AudioContent)[] = [
+        { type: "text", text: expandedText },
+      ];
       if (currentImages) {
         userContent.push(...currentImages);
+      }
+      if (options?.audio) {
+        userContent.push(...options.audio);
       }
       messages.push({
         role: "user",
@@ -1358,12 +1366,19 @@ export class AgentSession {
   /**
    * Internal: Queue a steering message (already expanded, no extension command check).
    */
-  private async queueSteer(text: string, images?: ImageContent[]): Promise<void> {
+  private async queueSteer(
+    text: string,
+    images?: ImageContent[],
+    audio?: AudioContent[],
+  ): Promise<void> {
     this.steeringMessages.push(text);
     this.emitQueueUpdate();
-    const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
+    const content: (TextContent | ImageContent | AudioContent)[] = [{ type: "text", text }];
     if (images) {
       content.push(...images);
+    }
+    if (audio) {
+      content.push(...audio);
     }
     this.agent.steer({
       role: "user",
@@ -1375,12 +1390,19 @@ export class AgentSession {
   /**
    * Internal: Queue a follow-up message (already expanded, no extension command check).
    */
-  private async queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
+  private async queueFollowUp(
+    text: string,
+    images?: ImageContent[],
+    audio?: AudioContent[],
+  ): Promise<void> {
     this.followUpMessages.push(text);
     this.emitQueueUpdate();
-    const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
+    const content: (TextContent | ImageContent | AudioContent)[] = [{ type: "text", text }];
     if (images) {
       content.push(...images);
+    }
+    if (audio) {
+      content.push(...audio);
     }
     this.agent.followUp({
       role: "user",

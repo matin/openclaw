@@ -230,19 +230,29 @@ export function convertResponsesMessages<TApi extends Api>(
           content: [{ type: "input_text", text: sanitizeSurrogates(msg.content) }],
         });
       } else {
-        const content: ResponseInputContent[] = msg.content.map((item): ResponseInputContent => {
-          if (item.type === "text") {
-            return {
-              type: "input_text",
-              text: sanitizeSurrogates(item.text),
-            } satisfies ResponseInputText;
-          }
-          return {
-            type: "input_image",
-            detail: "auto",
-            image_url: `data:${item.mimeType};base64,${item.data}`,
-          } satisfies ResponseInputImage;
-        });
+        const content: ResponseInputContent[] = msg.content.flatMap(
+          (item): ResponseInputContent[] => {
+            if (item.type === "text") {
+              return [
+                {
+                  type: "input_text",
+                  text: sanitizeSurrogates(item.text),
+                } satisfies ResponseInputText,
+              ];
+            }
+            // OpenAI responses has no native audio part; drop audio.
+            if (item.type === "audio") {
+              return [];
+            }
+            return [
+              {
+                type: "input_image",
+                detail: "auto",
+                image_url: `data:${item.mimeType};base64,${item.data}`,
+              } satisfies ResponseInputImage,
+            ];
+          },
+        );
         if (content.length === 0) {
           continue;
         }

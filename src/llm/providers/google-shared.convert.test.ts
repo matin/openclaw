@@ -331,6 +331,33 @@ describe("google-shared convertMessages", () => {
     expect(requireRecordProperty(toolCall, "functionCall").name).toBe("myTool");
   });
 
+  it("converts a native audio content item to an inlineData part", () => {
+    const model = makeModel("gemini-3-flash");
+    const context = {
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "what did i say?" },
+            { type: "audio", mimeType: "audio/ogg", data: "QUJD" },
+          ],
+        },
+      ],
+    } as unknown as Context;
+
+    const contents = convertMessagesForTest(model, context);
+    expect(contents).toHaveLength(1);
+    expect(contents[0].role).toBe("user");
+    const parts = contents[0].parts ?? [];
+    expect(parts).toHaveLength(2);
+    const audioPart = parts.find(
+      (part) => typeof part === "object" && part !== null && "inlineData" in part,
+    );
+    const inlineData = requireRecordProperty(asRecord(audioPart), "inlineData");
+    expect(inlineData.mimeType).toBe("audio/ogg");
+    expect(inlineData.data).toBe("QUJD");
+  });
+
   it("strips tool call and response ids for google-gemini-cli", () => {
     const model = makeGeminiCliModel("gemini-3-flash");
     const context = {

@@ -1006,6 +1006,7 @@ const ToolsMediaUnderstandingSchema = z
     models: z.array(MediaUnderstandingModelSchema).optional(),
     echoTranscript: z.boolean().optional(),
     echoFormat: z.string().optional(),
+    nativeIngestion: z.boolean().optional(),
   })
   .strict()
   .optional();

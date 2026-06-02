@@ -85,6 +85,7 @@ type AttemptSpawnWorkspaceHoisted = {
   initializeGlobalHookRunnerMock: UnknownMock;
   runContextEngineMaintenanceMock: AsyncContextEngineMaintenanceMock;
   detectAndLoadPromptImagesMock: AsyncUnknownMock;
+  detectAndLoadPromptAudioMock: AsyncUnknownMock;
   getHistoryLimitFromSessionKeyMock: Mock<
     (sessionKey: string | undefined, config: unknown) => number | undefined
   >;
@@ -182,6 +183,9 @@ const hoisted = vi.hoisted((): AttemptSpawnWorkspaceHoisted => {
     loadedCount: 0,
     skippedCount: 0,
   }));
+  const detectAndLoadPromptAudioMock = vi.fn(async () => ({
+    audio: [],
+  }));
   const getHistoryLimitFromSessionKeyMock = vi.fn<
     (sessionKey: string | undefined, config: unknown) => number | undefined
   >(() => undefined);
@@ -228,6 +232,7 @@ const hoisted = vi.hoisted((): AttemptSpawnWorkspaceHoisted => {
     initializeGlobalHookRunnerMock,
     runContextEngineMaintenanceMock,
     detectAndLoadPromptImagesMock,
+    detectAndLoadPromptAudioMock,
     getHistoryLimitFromSessionKeyMock,
     limitHistoryTurnsMock,
     preemptiveCompactionCalls,
@@ -508,6 +513,8 @@ vi.mock("../runs.js", () => ({
 vi.mock("./images.js", () => ({
   detectAndLoadPromptImages: (...args: unknown[]) =>
     (hoisted.detectAndLoadPromptImagesMock as (...args: unknown[]) => unknown)(...args),
+  detectAndLoadPromptAudio: (...args: unknown[]) =>
+    (hoisted.detectAndLoadPromptAudioMock as (...args: unknown[]) => unknown)(...args),
 }));
 
 vi.mock("../../system-prompt-params.js", () => ({

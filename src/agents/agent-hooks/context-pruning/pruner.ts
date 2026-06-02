@@ -1,4 +1,9 @@
-import type { ImageContent, TextContent, ToolResultMessage } from "../../../llm/types.js";
+import type {
+  AudioContent,
+  ImageContent,
+  TextContent,
+  ToolResultMessage,
+} from "../../../llm/types.js";
 import { CHARS_PER_TOKEN_ESTIMATE, estimateStringChars } from "../../../utils/cjk-chars.js";
 import { dropThinkingBlocks } from "../../embedded-agent-runner/thinking.js";
 import type { AgentMessage } from "../../runtime/index.js";
@@ -143,7 +148,9 @@ function estimateWeightedTextChars(text: string): number {
   return estimateStringChars(text);
 }
 
-function estimateTextAndImageChars(content: ReadonlyArray<TextContent | ImageContent>): number {
+function estimateTextAndImageChars(
+  content: ReadonlyArray<TextContent | ImageContent | AudioContent>,
+): number {
   let chars = 0;
   for (const block of content) {
     const text = coerceTextBlock(block);
