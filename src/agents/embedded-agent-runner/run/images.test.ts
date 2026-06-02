@@ -815,6 +815,30 @@ describe("detectAudioReferences", () => {
       detectAudioReferences("[media attached: media://inbound/voice.ogg (audio/ogg)]"),
     ).toHaveLength(1);
   });
+
+  it("classifies a claim-check URI as audio from the id extension alone, without an (audio/...) MIME", () => {
+    // store.ts appends a MIME-derived extension to the saved id, so inbound
+    // audio URIs end in .ogg/.caf/etc even when the bracket omits the MIME
+    // annotation (e.g. the gateway chat-attachments producer). The extension is
+    // the load-bearing discriminator; assert it fires on its own.
+    expect(detectAudioReferences("[media attached: media://inbound/voice.ogg]")).toStrictEqual([
+      {
+        raw: "media://inbound/voice.ogg",
+        type: "media-uri",
+        resolved: "media://inbound/voice.ogg",
+      },
+    ]);
+  });
+
+  it("keeps image claim-check URIs out of audio detection (image/audio stay independent)", () => {
+    // The discriminator is deliberate: unlike detectImageReferences (which
+    // accepts any media:// URI), audio detection must NOT swallow image URIs,
+    // or every inbound image would be misclassified as audio.
+    expect(detectAudioReferences("[media attached: media://inbound/photo.png]")).toHaveLength(0);
+    expect(
+      detectAudioReferences("[media attached: media://inbound/photo.png (image/png)]"),
+    ).toHaveLength(0);
+  });
 });
 
 describe("detectAndLoadPromptAudio", () => {
