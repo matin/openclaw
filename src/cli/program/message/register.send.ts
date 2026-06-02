@@ -25,10 +25,11 @@ export function registerMessageSendCommand(message: Command, helpers: MessageCli
         .option("--pin", "Request that the delivered message be pinned when supported", false)
         .option("--reply-to <id>", "Reply-to message id")
         .option("--thread-id <id>", "Thread id (Telegram forum thread)")
+        .option("--as-voice", "Send audio media as a voice note when supported.", false)
         .option("--gif-playback", "Treat video media as GIF playback (WhatsApp only).", false)
         .option(
           "--force-document",
-          "Send media as document to avoid channel compression (Telegram, WhatsApp). Applies to images, GIFs, and videos.",
+          "Send media as document to avoid Telegram compression (Telegram only). Applies to images and GIFs.",
           false,
         )
         .option(
