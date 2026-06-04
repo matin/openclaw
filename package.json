@@ -1896,6 +1896,7 @@
     "linkedom": "0.18.12",
     "minimatch": "10.2.5",
     "node-edge-tts": "1.2.10",
+    "node-llama-cpp": "^3.18.1",
     "openai": "6.39.1",
     "partial-json": "0.1.7",
     "playwright-core": "1.60.0",
