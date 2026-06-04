@@ -382,6 +382,26 @@ describe("applyMediaUnderstanding", () => {
     expect((ctx as unknown as { BodyForAgent?: string }).BodyForAgent).toBe(ctx.Body);
   });
 
+  it("skips audio transcription entirely when nativeIngestion is enabled", async () => {
+    const ctx = await createAudioCtx();
+    const originalBody = ctx.Body;
+    const cfg = createGroqAudioConfig();
+    const audioCfg = cfg.tools?.media?.audio;
+    if (audioCfg) {
+      audioCfg.nativeIngestion = true;
+    }
+    const result = await applyMediaUnderstanding({
+      ctx,
+      cfg,
+      providers: createGroqProviders(),
+    });
+    // Native multimodal ingestion owns the audio: no transcript, body untouched,
+    // so the embedded runner can attach the audio as a native content part.
+    expect(result.appliedAudio).toBe(false);
+    expect(ctx.Transcript).toBeUndefined();
+    expect(ctx.Body).toBe(originalBody);
+  });
+
   it("skips file blocks for text-like audio when transcription succeeds", async () => {
     const ctx = await createAudioCtx({
       fileName: "data.mp3",
