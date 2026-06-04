@@ -11,6 +11,7 @@ import {
 import { ensureSandboxWorkspaceForSession } from "../../agents/sandbox.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
+import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { resolveChannelAccountMediaMaxMb } from "../../media/configured-max-bytes.js";
 import { resolveOutboundAttachmentFromUrl } from "../../media/outbound-attachment.js";
 import { resolveAgentScopedOutboundMediaAccess } from "../../media/read-capability.js";
@@ -19,6 +20,7 @@ import { appendReplyMediaFailureWarning, copyReplyPayloadMetadata } from "../rep
 import type { ReplyPayload } from "../types.js";
 
 const FILE_URL_RE = /^file:\/\//i;
+const replyMediaLog = createSubsystemLogger("reply-media");
 const WINDOWS_DRIVE_RE = /^[a-zA-Z]:[\\/]/;
 const SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 const HAS_FILE_EXT_RE = /\.\w{1,10}$/;
@@ -222,6 +224,9 @@ export function createReplyMediaPathNormalizer(params: {
         normalized = await normalizeMediaSource(media);
       } catch (err) {
         firstMediaDropError ??= err;
+        // Warn-level on purpose: a dropped MEDIA path degrades the reply to
+        // "Media failed." with no other operator-visible signal (tulgey#233).
+        replyMediaLog.warn(`dropping blocked reply media ${media}: ${String(err)}`);
         logVerbose(`dropping blocked reply media ${media}: ${String(err)}`);
         continue;
       }

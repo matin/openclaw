@@ -550,6 +550,16 @@ export async function applyMediaUnderstanding(params: {
 
   try {
     const tasks = CAPABILITY_ORDER.map((capability) => async () => {
+      if (capability === "audio" && cfg.tools?.media?.audio?.nativeIngestion === true) {
+        // Native multimodal audio ingestion owns inbound audio: skip the
+        // transcription capability so the [media attached: ... (audio/...)] note
+        // survives to the prompt and the embedded runner attaches the audio as a
+        // native content part (modelSupportsAudioInput gates per-model; STT stays
+        // the fallback when the flag is off). Without this gate the understanding
+        // pipeline rewrites the body to `Transcript: "..."` and the model never
+        // hears the audio even though the channel-level STT preflight was skipped.
+        return undefined;
+      }
       const config = cfg.tools?.media?.[capability];
       return await runCapability({
         capability,
