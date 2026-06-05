@@ -239,7 +239,13 @@ function completeTask(state: LaneState, taskId: number, taskGeneration: number):
   if (taskGeneration !== state.generation) {
     return false;
   }
-  state.activeTaskIds.delete(taskId);
+  // The slot may already have been reclaimed (stall-reclaim) or cleared
+  // (resetCommandLane within the same generation is impossible, but a sibling
+  // reclaim is not). A late completion for a no-longer-active task must be a
+  // no-op: it freed nothing, so it must not pump or wake waiters as if it had.
+  if (!state.activeTaskIds.delete(taskId)) {
+    return false;
+  }
   state.activeTaskInfo.delete(taskId);
   return true;
 }
@@ -248,8 +254,10 @@ function completeTask(state: LaneState, taskId: number, taskGeneration: number):
  * Reclaim any active slot whose underlying task has shown no progress for
  * longer than {@link LANE_SLOT_STALL_CEILING_MS}. The task's promise may still
  * be unsettled (a "phantom" slot), but the slot is freed so queued work can
- * dispatch. Stale completions from the reclaimed task are ignored because the
- * lane generation is bumped.
+ * dispatch. Only the stalled taskIds are removed from the active set, so
+ * healthy sibling tasks on a multi-concurrency lane are untouched; the late
+ * completion of a reclaimed task is rendered a no-op by completeTask's
+ * membership check.
  *
  * Returns the number of slots reclaimed.
  */
@@ -272,9 +280,6 @@ function reclaimStalledSlots(state: LaneState, nowMs: number): number {
   if (stalled.length === 0) {
     return 0;
   }
-  // Bump generation so the eventual (late) completion of the phantom task is
-  // ignored by completeTask and cannot double-free or re-pump.
-  state.generation += 1;
   for (const taskId of stalled) {
     state.activeTaskIds.delete(taskId);
     state.activeTaskInfo.delete(taskId);

@@ -887,6 +887,48 @@ describe("command queue", () => {
     }
   });
 
+  it("reclaiming one stalled slot leaves a healthy sibling task intact", async () => {
+    const lane = `phantom-sibling-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setCommandLaneConcurrency(lane, 2);
+
+    vi.useFakeTimers();
+    try {
+      // One slot stalls forever (no timeout); the sibling slot is healthy and
+      // settles. Reclaim must remove only the phantom, and the healthy task's
+      // completion must still pump/resolve normally.
+      const phantom = enqueueCommandInLane(lane, async () => new Promise<never>(() => {}));
+      phantom.catch(() => {});
+
+      const healthyBlocker = createDeferred();
+      const healthy = enqueueCommandInLane(lane, async () => {
+        await healthyBlocker.promise;
+        return "healthy";
+      });
+
+      expectLaneSnapshotFields(lane, { activeCount: 2, queuedCount: 0 });
+
+      let queuedRan = false;
+      const queued = enqueueCommandInLane(lane, async () => {
+        queuedRan = true;
+        return "queued";
+      });
+
+      // Past the ceiling, then a pump-triggering enqueue reclaims the phantom.
+      await vi.advanceTimersByTimeAsync(10 * 60_000 + 1);
+      enqueueCommandInLane(lane, async () => "trigger").catch(() => {});
+      await vi.advanceTimersByTimeAsync(1);
+
+      // Healthy sibling still resolves once released (its completion was not
+      // dropped by a generation bump).
+      healthyBlocker.resolve();
+      await expect(healthy).resolves.toBe("healthy");
+      await expect(queued).resolves.toBe("queued");
+      expect(queuedRan).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("warns at the dispatch-blocked decision point that was previously silent", async () => {
     const lane = `blocked-warn-lane-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     setCommandLaneConcurrency(lane, 1);
