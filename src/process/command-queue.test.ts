@@ -900,10 +900,16 @@ describe("command queue", () => {
       phantom.catch(() => {});
 
       const healthyBlocker = createDeferred();
-      const healthy = enqueueCommandInLane(lane, async () => {
-        await healthyBlocker.promise;
-        return "healthy";
-      });
+      // The healthy sibling reports fresh progress, so the ceiling check sees
+      // it as live and only the phantom is reclaimed.
+      const healthy = enqueueCommandInLane(
+        lane,
+        async () => {
+          await healthyBlocker.promise;
+          return "healthy";
+        },
+        { taskTimeoutProgressAtMs: () => Date.now() },
+      );
 
       expectLaneSnapshotFields(lane, { activeCount: 2, queuedCount: 0 });
 
@@ -915,14 +921,20 @@ describe("command queue", () => {
 
       // Past the ceiling, then a pump-triggering enqueue reclaims the phantom.
       await vi.advanceTimersByTimeAsync(10 * 60_000 + 1);
-      enqueueCommandInLane(lane, async () => "trigger").catch(() => {});
-      await vi.advanceTimersByTimeAsync(1);
+      const trigger = enqueueCommandInLane(lane, async () => "trigger");
 
-      // Healthy sibling still resolves once released (its completion was not
-      // dropped by a generation bump).
+      // Synchronously after the reclaiming pump: only the phantom was reclaimed
+      // (1 of 2 slots freed). The healthy sibling keeps its slot and the queued
+      // task dispatches into the freed one, so the lane is at full concurrency
+      // rather than wedged. (queued resolves on the next microtask, freeing its
+      // slot for trigger, so this must be asserted before advancing timers.)
+      expectLaneSnapshotFields(lane, { activeCount: 2, queuedCount: 1 });
+
+      await vi.advanceTimersByTimeAsync(1);
       healthyBlocker.resolve();
       await expect(healthy).resolves.toBe("healthy");
       await expect(queued).resolves.toBe("queued");
+      await expect(trigger).resolves.toBe("trigger");
       expect(queuedRan).toBe(true);
     } finally {
       vi.useRealTimers();
