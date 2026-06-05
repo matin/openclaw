@@ -261,6 +261,11 @@ function resolveModelsConfigInput(config?: OpenClawConfig): {
   };
 }
 
+const MODELS_JSON_LOCK_WAIT_MS = (() => {
+  const raw = Number(process.env.OPENCLAW_MODELS_JSON_LOCK_WAIT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 60_000;
+})();
+
 async function withModelsJsonWriteLock<T>(targetPath: string, run: () => Promise<T>): Promise<T> {
   const prior = MODELS_JSON_STATE.writeLocks.get(targetPath) ?? Promise.resolve();
   let release: () => void = () => {};
@@ -270,7 +275,31 @@ async function withModelsJsonWriteLock<T>(targetPath: string, run: () => Promise
   const pending = prior.then(() => gate);
   MODELS_JSON_STATE.writeLocks.set(targetPath, pending);
   try {
-    await prior;
+    // Bounded wait. A holder that never settles (e.g. a turn aborted while its
+    // run() awaited a hung provider call) used to park every later caller on a
+    // dead promise forever — model-resolution then stalled with no error, no
+    // timeout, and no log for every subsequent run in the process (tulgey#238).
+    // After the bound we steal the lock: a possible concurrent models.json
+    // write (atomic temp-file rename) is recoverable; a deadlocked agent is not.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = await Promise.race([
+      prior.then(
+        () => false,
+        () => false,
+      ),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(true), MODELS_JSON_LOCK_WAIT_MS);
+        timer.unref?.();
+      }),
+    ]);
+    if (timer) {
+      clearTimeout(timer);
+    }
+    if (timedOut) {
+      console.warn(
+        `[models-config] models.json write lock held past ${MODELS_JSON_LOCK_WAIT_MS}ms by an unsettled holder; stealing lock for ${targetPath} (tulgey#238)`,
+      );
+    }
     return await run();
   } finally {
     release();
@@ -279,6 +308,9 @@ async function withModelsJsonWriteLock<T>(targetPath: string, run: () => Promise
     }
   }
 }
+
+/** Test-only export: regression coverage for the bounded lock wait (tulgey#238). */
+export const __withModelsJsonWriteLockForTest = withModelsJsonWriteLock;
 
 export async function ensureOpenClawModelsJson(
   config?: OpenClawConfig,
