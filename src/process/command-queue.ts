@@ -71,14 +71,41 @@ type QueueEntry = {
   onWait?: (waitMs: number, queuedAhead: number) => void;
 };
 
+type ActiveTaskInfo = {
+  startedAtMs: number;
+  progressAtMs: () => number | undefined;
+};
+
 type LaneState = {
   lane: string;
   queue: QueueEntry[];
   activeTaskIds: Set<number>;
+  /**
+   * Per-active-task metadata used by the stall-reclaim guard. Keyed by the same
+   * task id stored in `activeTaskIds`. A slot with no finite `taskTimeoutMs`
+   * cannot self-expire via `runQueueEntryTask`, so this lets `pump()` reclaim a
+   * phantom slot whose underlying promise never settled (see #12 / tulgey#238).
+   */
+  activeTaskInfo: Map<number, ActiveTaskInfo>;
   maxConcurrent: number;
   draining: boolean;
   generation: number;
+  /** Last time the silent "cannot dispatch" warn fired, for throttling. */
+  lastBlockedWarnAtMs: number;
 };
+
+/**
+ * Hard ceiling after which an active lane slot with no progress is treated as a
+ * phantom and forcibly reclaimed so queued work can dispatch. This is the
+ * belt-and-suspenders backstop for enqueues that carry no finite
+ * `taskTimeoutMs` (e.g. the embedded-run session lane). 10 minutes is well
+ * above any legitimate single agent turn; the stage-stall watchdog and the
+ * per-task `taskTimeoutMs` fire long before this for runs that opt in.
+ */
+const LANE_SLOT_STALL_CEILING_MS = 10 * 60_000;
+
+/** Minimum gap between throttled "cannot dispatch" warns per lane. */
+const LANE_BLOCKED_WARN_THROTTLE_MS = 30_000;
 
 export type CommandLaneSnapshot = {
   lane: string;
@@ -126,7 +153,17 @@ function getQueueState() {
     state.nextQueueSequence = 1;
   }
   let maxQueueSequence = state.nextQueueSequence - 1;
-  for (const lane of state.lanes.values()) {
+  for (const lane of state.lanes.values() as IterableIterator<
+    LaneState & { activeTaskInfo?: Map<number, ActiveTaskInfo>; lastBlockedWarnAtMs?: number }
+  >) {
+    // Schema migration for lanes inherited from an older singleton that lacked
+    // the stall-reclaim bookkeeping (pre-#12).
+    if (!lane.activeTaskInfo) {
+      lane.activeTaskInfo = new Map<number, ActiveTaskInfo>();
+    }
+    if (typeof lane.lastBlockedWarnAtMs !== "number") {
+      lane.lastBlockedWarnAtMs = 0;
+    }
     for (const [index, entry] of (
       lane.queue as Array<
         QueueEntry & {
@@ -188,9 +225,11 @@ function getLaneState(lane: string): LaneState {
     lane,
     queue: [],
     activeTaskIds: new Set(),
+    activeTaskInfo: new Map(),
     maxConcurrent: 1,
     draining: false,
     generation: 0,
+    lastBlockedWarnAtMs: 0,
   };
   queueState.lanes.set(lane, created);
   return created;
@@ -201,7 +240,63 @@ function completeTask(state: LaneState, taskId: number, taskGeneration: number):
     return false;
   }
   state.activeTaskIds.delete(taskId);
+  state.activeTaskInfo.delete(taskId);
   return true;
+}
+
+/**
+ * Reclaim any active slot whose underlying task has shown no progress for
+ * longer than {@link LANE_SLOT_STALL_CEILING_MS}. The task's promise may still
+ * be unsettled (a "phantom" slot), but the slot is freed so queued work can
+ * dispatch. Stale completions from the reclaimed task are ignored because the
+ * lane generation is bumped.
+ *
+ * Returns the number of slots reclaimed.
+ */
+function reclaimStalledSlots(state: LaneState, nowMs: number): number {
+  if (state.activeTaskIds.size === 0) {
+    return 0;
+  }
+  const stalled: number[] = [];
+  for (const taskId of state.activeTaskIds) {
+    const info = state.activeTaskInfo.get(taskId);
+    // Missing info should not happen, but treat it as reclaimable rather than
+    // letting an untracked slot wedge the lane forever.
+    const lastProgressAtMs = info
+      ? Math.max(info.startedAtMs, readProgressAtMs(info, state.lane))
+      : 0;
+    if (nowMs - lastProgressAtMs >= LANE_SLOT_STALL_CEILING_MS) {
+      stalled.push(taskId);
+    }
+  }
+  if (stalled.length === 0) {
+    return 0;
+  }
+  // Bump generation so the eventual (late) completion of the phantom task is
+  // ignored by completeTask and cannot double-free or re-pump.
+  state.generation += 1;
+  for (const taskId of stalled) {
+    state.activeTaskIds.delete(taskId);
+    state.activeTaskInfo.delete(taskId);
+  }
+  diag.warn(
+    `lane slot reclaimed: lane=${state.lane} reclaimed=${stalled.length} ` +
+      `ceilingMs=${LANE_SLOT_STALL_CEILING_MS} active=${state.activeTaskIds.size} queued=${state.queue.length}`,
+  );
+  return stalled.length;
+}
+
+function readProgressAtMs(info: ActiveTaskInfo, lane: string): number {
+  let value: number | undefined;
+  try {
+    value = info.progressAtMs();
+  } catch (err) {
+    diag.warn(`lane slot progress callback failed: lane=${lane} error="${String(err)}"`);
+    return info.startedAtMs;
+  }
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : info.startedAtMs;
 }
 
 function hasPendingActiveTasks(taskIds: Set<number>): boolean {
@@ -337,7 +432,32 @@ function drainLane(lane: string) {
 
   const pump = () => {
     try {
-      while (state.activeTaskIds.size < state.maxConcurrent && state.queue.length > 0) {
+      while (state.queue.length > 0) {
+        if (state.activeTaskIds.size >= state.maxConcurrent) {
+          // Lane appears saturated. Before silently giving up — the failure
+          // mode behind tulgey#238 — try to reclaim phantom slots whose task
+          // never settled and carried no finite timeout to self-expire.
+          const reclaimed = reclaimStalledSlots(state, Date.now());
+          if (reclaimed === 0 || state.activeTaskIds.size >= state.maxConcurrent) {
+            // Genuinely saturated (or reclaim freed nothing usable). Emit a
+            // throttled warn at the decision point that was previously silent,
+            // so a wedged lane is observable in prod.
+            const now = Date.now();
+            if (now - state.lastBlockedWarnAtMs >= LANE_BLOCKED_WARN_THROTTLE_MS) {
+              state.lastBlockedWarnAtMs = now;
+              let oldestActiveAgeMs = 0;
+              for (const info of state.activeTaskInfo.values()) {
+                oldestActiveAgeMs = Math.max(oldestActiveAgeMs, now - info.startedAtMs);
+              }
+              diag.warn(
+                `lane dispatch blocked: lane=${lane} active=${state.activeTaskIds.size} ` +
+                  `maxConcurrent=${state.maxConcurrent} queued=${state.queue.length} ` +
+                  `oldestActiveAgeMs=${oldestActiveAgeMs}`,
+              );
+            }
+            break;
+          }
+        }
         const entry = state.queue.shift() as QueueEntry;
         const waitedMs = Date.now() - entry.enqueuedAt;
         if (waitedMs >= entry.warnAfterMs) {
@@ -354,9 +474,13 @@ function drainLane(lane: string) {
         logLaneDequeue(lane, waitedMs, state.queue.length);
         const taskId = getQueueState().nextTaskId++;
         const taskGeneration = state.generation;
+        const startTime = Date.now();
         state.activeTaskIds.add(taskId);
+        state.activeTaskInfo.set(taskId, {
+          startedAtMs: startTime,
+          progressAtMs: () => entry.taskTimeoutProgressAtMs?.(),
+        });
         void (async () => {
-          const startTime = Date.now();
           try {
             const result = await runQueueEntryTask(lane, entry);
             const completedCurrentGeneration = completeTask(state, taskId, taskGeneration);
@@ -525,6 +649,7 @@ export function resetCommandLane(lane: string = CommandLane.Main): number {
   const released = state.activeTaskIds.size;
   state.generation += 1;
   state.activeTaskIds.clear();
+  state.activeTaskInfo.clear();
   state.draining = false;
   if (state.queue.length > 0) {
     drainLane(cleaned);
@@ -570,6 +695,7 @@ export function resetAllLanes(): void {
   for (const state of queueState.lanes.values()) {
     state.generation += 1;
     state.activeTaskIds.clear();
+    state.activeTaskInfo.clear();
     state.draining = false;
     if (state.queue.length > 0) {
       lanesToDrain.push(state.lane);

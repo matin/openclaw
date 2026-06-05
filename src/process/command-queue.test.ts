@@ -841,6 +841,80 @@ describe("command queue", () => {
     }
   });
 
+  it("reclaims a phantom slot whose untimed task never settles (tulgey#238)", async () => {
+    const lane = `phantom-lane-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setCommandLaneConcurrency(lane, 1);
+
+    vi.useFakeTimers();
+    try {
+      // First task never settles AND carries no taskTimeoutMs — the production
+      // shape of the embedded-run session lane before the fix. It permanently
+      // holds the single slot.
+      const phantom = enqueueCommandInLane(lane, async () => new Promise<never>(() => {}));
+      // Avoid an unhandled rejection when the lane is later reclaimed; the
+      // phantom promise itself stays pending forever regardless.
+      phantom.catch(() => {});
+
+      let secondRan = false;
+      const second = enqueueCommandInLane(lane, async () => {
+        secondRan = true;
+        return "second";
+      });
+
+      expectLaneSnapshotFields(lane, { activeCount: 1, queuedCount: 1 });
+      expect(secondRan).toBe(false);
+
+      // Advance past the stall ceiling. A later pump must reclaim the phantom
+      // slot so queued work dispatches. Pre-fix this hangs forever: pump sees
+      // activeTaskIds.size >= maxConcurrent and returns silently, the slot is
+      // never freed, and `second` never runs.
+      await vi.advanceTimersByTimeAsync(10 * 60_000 + 1);
+
+      // A subsequent enqueue triggers a pump; the stalled slot is reclaimed.
+      let thirdRan = false;
+      const third = enqueueCommandInLane(lane, async () => {
+        thirdRan = true;
+        return "third";
+      });
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(second).resolves.toBe("second");
+      await expect(third).resolves.toBe("third");
+      expect(secondRan).toBe(true);
+      expect(thirdRan).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("warns at the dispatch-blocked decision point that was previously silent", async () => {
+    const lane = `blocked-warn-lane-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setCommandLaneConcurrency(lane, 1);
+
+    const blocker = createDeferred();
+    try {
+      const first = enqueueCommandInLane(lane, async () => {
+        await blocker.promise;
+        return "first";
+      });
+      // Second enqueue pumps but cannot dispatch (lane saturated, not stalled).
+      const second = enqueueCommandInLane(lane, async () => "second");
+
+      const blockedWarn = diagnosticMocks.diag.warn.mock.calls.find(
+        ([message]) => typeof message === "string" && message.startsWith("lane dispatch blocked:"),
+      );
+      expect(blockedWarn).toBeDefined();
+      expect(blockedWarn?.[0]).toContain(`lane=${lane}`);
+      expect(blockedWarn?.[0]).toContain("maxConcurrent=1");
+
+      blocker.resolve();
+      await expect(first).resolves.toBe("first");
+      await expect(second).resolves.toBe("second");
+    } finally {
+      blocker.resolve();
+    }
+  });
+
   it("shares lane state across distinct module instances", async () => {
     const commandQueueA = await importFreshModule<typeof import("./command-queue.js")>(
       import.meta.url,
