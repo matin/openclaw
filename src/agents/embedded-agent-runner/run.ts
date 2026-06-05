@@ -503,7 +503,12 @@ export async function runEmbeddedAgent(
       : enqueueCommandInLane(globalLane, task, withLaneTimeout(globalOpts));
   };
   const enqueueSession = <T>(task: () => Promise<T>, opts?: CommandQueueEnqueueOptions) => {
-    const sessionOpts: CommandQueueEnqueueOptions = { ...opts, priority: sessionQueuePriority };
+    // Carry the lane timeout on the session lane too. The session-lane task
+    // body awaits the global lane, so if the global lane wedges (or the inner
+    // run never settles) the outer session slot — which previously had no
+    // finite taskTimeoutMs — would be held forever, stalling the lane at
+    // embedded_run:started with no self-expiry. See tulgey#238.
+    const sessionOpts = withLaneTimeout({ ...opts, priority: sessionQueuePriority });
     return params.enqueue
       ? params.enqueue(task, sessionOpts)
       : enqueueCommandInLane(sessionLane, task, sessionOpts);
