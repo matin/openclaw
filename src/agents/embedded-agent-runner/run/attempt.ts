@@ -787,7 +787,12 @@ export async function runEmbeddedAttempt(
   log.debug(
     `embedded run start: runId=${params.runId} sessionId=${params.sessionId} provider=${params.provider} model=${params.modelId} thinking=${params.thinkLevel} messageChannel=${params.messageChannel ?? params.messageProvider ?? "unknown"}`,
   );
-  const prepStages = createEmbeddedRunStageTracker();
+  const prepStages = createEmbeddedRunStageTracker({
+    watchdog: {
+      label: `runId=${params.runId} sessionId=${params.sessionId} phase=prep`,
+      warn: (message) => log.warn(message),
+    },
+  });
   const emitPrepStageSummary = (phase: string) => {
     const summary = prepStages.snapshot();
     const shouldWarn = shouldWarnEmbeddedRunStageSummary(summary);

@@ -35,6 +35,18 @@ const EMBEDDED_RUN_STAGE_WARN_STAGE_MS = 5_000;
  */
 export function createEmbeddedRunStageTracker(options?: {
   now?: () => number;
+  /**
+   * In-flight stall watchdog (tulgey#238): runs stalled between stage marks
+   * with no log output, no trace, and no timeout — undiagnosable from the
+   * journal. When set, a stage exceeding `warnAfterMs` without a new mark logs
+   * the last completed stage so the journal names the hung stage. The watchdog
+   * stops at the first `snapshot()` call (phase complete) and self-caps.
+   */
+  watchdog?: {
+    label: string;
+    warn: (message: string) => void;
+    warnAfterMs?: number;
+  };
 }): EmbeddedRunStageTracker {
   const now = options?.now ?? Date.now;
   const startedAt = now();
@@ -42,6 +54,34 @@ export function createEmbeddedRunStageTracker(options?: {
   const stages: EmbeddedRunStageTiming[] = [];
 
   const toMs = (value: number) => Math.max(0, Math.round(value));
+
+  let watchdogTimer: ReturnType<typeof setInterval> | undefined;
+  let watchdogReports = 0;
+  const stopWatchdog = () => {
+    if (watchdogTimer) {
+      clearInterval(watchdogTimer);
+      watchdogTimer = undefined;
+    }
+  };
+  if (options?.watchdog) {
+    const warnAfterMs = options.watchdog.warnAfterMs ?? 30_000;
+    const { label, warn } = options.watchdog;
+    watchdogTimer = setInterval(() => {
+      const stalledMs = toMs(now() - previousAt);
+      if (stalledMs < warnAfterMs) {
+        return;
+      }
+      watchdogReports += 1;
+      const last = stages[stages.length - 1]?.name ?? "(none)";
+      warn(
+        `embedded run stage stalled: ${label} lastCompletedStage=${last} stalledMs=${stalledMs} completedStages=${stages.length}`,
+      );
+      if (watchdogReports >= 10) {
+        stopWatchdog();
+      }
+    }, 15_000);
+    watchdogTimer.unref?.();
+  }
 
   return {
     mark(name) {
@@ -54,6 +94,7 @@ export function createEmbeddedRunStageTracker(options?: {
       previousAt = currentAt;
     },
     snapshot() {
+      stopWatchdog();
       return {
         totalMs: toMs(now() - startedAt),
         stages: stages.slice(),

@@ -541,7 +541,12 @@ export async function runEmbeddedAgent(
     return enqueueGlobal(async () => {
       throwIfAborted();
       const started = Date.now();
-      const startupStages = createEmbeddedRunStageTracker();
+      const startupStages = createEmbeddedRunStageTracker({
+        watchdog: {
+          label: `runId=${params.runId} sessionId=${params.sessionId}`,
+          warn: (message) => log.warn(message),
+        },
+      });
       let startupStagesEmitted = false;
       const notifyExecutionPhase = (
         phase: Parameters<NonNullable<RunEmbeddedAgentParams["onExecutionPhase"]>>[0]["phase"],
