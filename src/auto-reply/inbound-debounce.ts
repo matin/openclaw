@@ -83,9 +83,45 @@ export function createInboundDebouncer<T>(params: InboundDebounceCreateParams<T>
     }
   };
 
+  // Bounded wait on the prior same-key task. A flush whose downstream work
+  // never settles (hung media-understanding/model call in processMessage)
+  // previously parked every later message for that chat on a dead promise
+  // chain forever: inbound logged, nothing ever reached the command queue,
+  // and the chat went permanently silent until a restart re-primed the same
+  // poison (tulgey#238 family, fourth instance). After the bound we steal the
+  // chain: possible flush overlap for one chat is recoverable; a deaf chat
+  // is not.
+  const KEY_CHAIN_WAIT_MS = (() => {
+    const raw = Number(process.env.OPENCLAW_INBOUND_CHAIN_WAIT_MS);
+    return Number.isFinite(raw) && raw > 0 ? raw : 300_000;
+  })();
+
+  const boundedPrevious = (key: string, previous: Promise<void>) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    return Promise.race([
+      previous.then(
+        () => false,
+        () => false,
+      ),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(true), KEY_CHAIN_WAIT_MS);
+        timer.unref?.();
+      }),
+    ]).then((timedOut) => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      if (timedOut) {
+        console.warn(
+          `[inbound-debounce] prior flush for key=${key} unsettled after ${KEY_CHAIN_WAIT_MS}ms; stealing chain (tulgey#238)`,
+        );
+      }
+    });
+  };
+
   const enqueueKeyTask = (key: string, task: () => Promise<void>) => {
     const previous = keyChains.get(key) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(task);
+    const next = boundedPrevious(key, previous).then(task);
     const settled = next.catch(() => undefined);
     keyChains.set(key, settled);
     const cleanup = () => {
