@@ -55,19 +55,53 @@ type InflightResult = {
   meta?: Record<string, unknown>;
 };
 
-const inflightByContext = new WeakMap<
-  GatewayRequestContext,
-  Map<string, Promise<InflightResult>>
->();
-
-const getInflightMap = (context: GatewayRequestContext) => {
-  let inflight = inflightByContext.get(context);
-  if (!inflight) {
-    inflight = new Map();
-    inflightByContext.set(context, inflight);
-  }
-  return inflight;
+type InflightEntry = {
+  promise: Promise<InflightResult>;
+  startedAt: number;
 };
+
+// Process-global in-flight join, keyed by dedupeKey (prefix:idempotencyKey).
+//
+// In-flight dedupe MUST be process-global rather than context-scoped: a client
+// that times out and retries the same idempotent send over a NEW connection
+// gets a fresh GatewayRequestContext. A context-scoped map (the old WeakMap
+// keyed by context) put the retry in a different bucket, so both the original
+// and the retry missed the persistent dedupe (not yet completed) and executed
+// independently — two wire sends for one message tool call. Keying the map by
+// dedupeKey at module scope makes a retry on any connection join the original
+// in-flight send instead of re-executing.
+const inflightByDedupeKey = new Map<string, InflightEntry>();
+
+// Defensive TTL: if an in-flight promise never settles (e.g. a wedged delivery
+// that neither resolves nor rejects), its entry would otherwise leak forever
+// and wrongly suppress all future retries of that key. Sweep stale entries so
+// the map can self-heal. The happy path deletes entries in a finally block;
+// this only catches the pathological case.
+const INFLIGHT_TTL_MS = 5 * 60 * 1000;
+
+function sweepStaleInflightEntries(now: number) {
+  for (const [key, entry] of inflightByDedupeKey) {
+    if (now - entry.startedAt > INFLIGHT_TTL_MS) {
+      inflightByDedupeKey.delete(key);
+    }
+  }
+}
+
+// Throttle the duplicate-join warn so a retry storm cannot flood logs while
+// still making every distinct production occurrence visible.
+const DUPLICATE_JOIN_WARN_THROTTLE_MS = 10 * 1000;
+let lastDuplicateJoinWarnAt = 0;
+
+function warnDuplicateInflightJoin(params: { context: GatewayRequestContext; dedupeKey: string }) {
+  const now = Date.now();
+  if (now - lastDuplicateJoinWarnAt < DUPLICATE_JOIN_WARN_THROTTLE_MS) {
+    return;
+  }
+  lastDuplicateJoinWarnAt = now;
+  params.context.logGateway?.warn?.(
+    `duplicate send request joined in-flight idempotencyKey=${params.dedupeKey}`,
+  );
+}
 
 function resolveGatewayInflightMap(params: { context: GatewayRequestContext; dedupeKey: string }):
   | {
@@ -80,19 +114,19 @@ function resolveGatewayInflightMap(params: { context: GatewayRequestContext; ded
     }
   | {
       kind: "ready";
-      inflightMap: Map<string, Promise<InflightResult>>;
     } {
   // Persistent dedupe wins before process-local in-flight joins for idempotent retries.
   const cached = params.context.dedupe.get(params.dedupeKey);
   if (cached) {
     return { kind: "cached", cached };
   }
-  const inflightMap = getInflightMap(params.context);
-  const inflight = inflightMap.get(params.dedupeKey);
+  sweepStaleInflightEntries(Date.now());
+  const inflight = inflightByDedupeKey.get(params.dedupeKey);
   if (inflight) {
-    return { kind: "inflight", inflight };
+    warnDuplicateInflightJoin({ context: params.context, dedupeKey: params.dedupeKey });
+    return { kind: "inflight", inflight: inflight.promise };
   }
-  return { kind: "ready", inflightMap };
+  return { kind: "ready" };
 }
 
 function resolveGatewayInflightRequest(params: {
@@ -105,7 +139,6 @@ function resolveGatewayInflightRequest(params: {
       kind: "ready";
       idem: string;
       dedupeKey: string;
-      inflightMap: Map<string, Promise<InflightResult>>;
     }
   | {
       kind: "handled";
@@ -136,22 +169,23 @@ function resolveGatewayInflightRequest(params: {
     kind: "ready",
     idem,
     dedupeKey,
-    inflightMap: inflight.inflightMap,
   };
 }
 
 async function runGatewayInflightWork(params: {
-  inflightMap: Map<string, Promise<InflightResult>>;
   dedupeKey: string;
   work: Promise<InflightResult>;
   respond: RespondFn;
 }) {
-  params.inflightMap.set(params.dedupeKey, params.work);
+  inflightByDedupeKey.set(params.dedupeKey, {
+    promise: params.work,
+    startedAt: Date.now(),
+  });
   try {
     const result = await params.work;
     params.respond(result.ok, result.payload, result.error, result.meta);
   } finally {
-    params.inflightMap.delete(params.dedupeKey);
+    inflightByDedupeKey.delete(params.dedupeKey);
   }
 }
 
@@ -480,7 +514,7 @@ export const sendHandlers: GatewayRequestHandlers = {
       await inflight.done;
       return;
     }
-    const { dedupeKey, inflightMap } = inflight;
+    const { dedupeKey } = inflight;
     const work = (async (): Promise<InflightResult> => {
       const resolvedChannel = await resolveRequestedChannel({
         requestChannel: request.channel,
@@ -561,7 +595,7 @@ export const sendHandlers: GatewayRequestHandlers = {
       }
     })();
 
-    await runGatewayInflightWork({ inflightMap, dedupeKey, work, respond });
+    await runGatewayInflightWork({ dedupeKey, work, respond });
   },
   send: async ({ params, respond, context, client }) => {
     const p = params;
@@ -604,7 +638,7 @@ export const sendHandlers: GatewayRequestHandlers = {
       await inflight.done;
       return;
     }
-    const { idem, dedupeKey, inflightMap } = inflight;
+    const { idem, dedupeKey } = inflight;
     const to = normalizeOptionalString(request.to) ?? "";
     const message = normalizeOptionalString(request.message) ?? "";
     const mediaUrl = normalizeOptionalString(request.mediaUrl);
@@ -781,7 +815,7 @@ export const sendHandlers: GatewayRequestHandlers = {
       }
     })();
 
-    await runGatewayInflightWork({ inflightMap, dedupeKey, work, respond });
+    await runGatewayInflightWork({ dedupeKey, work, respond });
   },
   poll: async ({ params, respond, context, client }) => {
     const p = params;
@@ -820,7 +854,7 @@ export const sendHandlers: GatewayRequestHandlers = {
       await inflight.done;
       return;
     }
-    const { idem, dedupeKey, inflightMap } = inflight;
+    const { idem, dedupeKey } = inflight;
     const work = (async (): Promise<InflightResult> => {
       const resolvedChannel = await resolveRequestedChannel({
         requestChannel: request.channel,
@@ -912,6 +946,6 @@ export const sendHandlers: GatewayRequestHandlers = {
       }
     })();
 
-    await runGatewayInflightWork({ inflightMap, dedupeKey, work, respond });
+    await runGatewayInflightWork({ dedupeKey, work, respond });
   },
 };
