@@ -1117,7 +1117,12 @@ export async function runEmbeddedAttempt(
         ...(err && outcome !== "blocked" ? { errorCategory: diagnosticErrorCategory(err) } : {}),
       });
     };
-    const corePluginToolStages = createEmbeddedRunStageTracker();
+    const corePluginToolStages = createEmbeddedRunStageTracker({
+      watchdog: {
+        label: `runId=${params.runId} sessionId=${params.sessionId} phase=core-plugin-tools`,
+        warn: (message) => log.warn(message),
+      },
+    });
     const toolsAllowWithForcedRuntimeTools = mergeForcedEmbeddedAttemptToolsAllow(
       params.toolsAllow,
       {
