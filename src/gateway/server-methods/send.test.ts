@@ -746,6 +746,69 @@ describe("gateway send mirroring", () => {
     expect(secondCall?.[3]?.cached).toBe(true);
   });
 
+  it("joins an in-flight send across reconnect contexts instead of re-executing", async () => {
+    // Prod evidence: one message tool call produced TWO wire sends ~3s apart
+    // under event-loop saturation. The client timed out and retried the same
+    // idempotent send over a NEW connection (a fresh GatewayRequestContext)
+    // while the first send was still in flight. In-flight dedupe must be
+    // process-global, keyed by idempotencyKey — not scoped per context — or the
+    // retry lands in a different bucket and executes a second delivery.
+    const firstContext = makeContext();
+    const secondContext = makeContext();
+    expect(firstContext).not.toBe(secondContext);
+    const firstRespond = vi.fn();
+    const secondRespond = vi.fn();
+    const deliveryDeferred = createDeferred<Array<{ messageId: string; channel: string }>>();
+    mocks.deliverOutboundPayloads.mockReturnValueOnce(deliveryDeferred.promise);
+
+    const firstRequest = sendHandlers.send({
+      params: {
+        to: "channel:C1",
+        message: "hi",
+        channel: "slack",
+        idempotencyKey: "idem-send-reconnect",
+      } as never,
+      respond: firstRespond,
+      context: firstContext,
+      req: { type: "req", id: "1", method: "send" },
+      client: null as never,
+      isWebchatConnect: () => false,
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    });
+
+    // Retry arrives on a brand-new connection/context before the first settles.
+    const secondRequest = sendHandlers.send({
+      params: {
+        to: "channel:C1",
+        message: "hi",
+        channel: "slack",
+        idempotencyKey: "idem-send-reconnect",
+      } as never,
+      respond: secondRespond,
+      context: secondContext,
+      req: { type: "req", id: "2", method: "send" },
+      client: null as never,
+      isWebchatConnect: () => false,
+    });
+
+    deliveryDeferred.resolve([{ messageId: "m-reconnect", channel: "slack" }]);
+    await Promise.all([firstRequest, secondRequest]);
+
+    // Only ONE wire send despite two requests on two contexts.
+    expect(mocks.deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    const firstCall = firstRespondCall(firstRespond);
+    expect(firstCall?.[0]).toBe(true);
+    expect(firstCall?.[1]?.messageId).toBe("m-reconnect");
+    expect(firstCall?.[3]?.cached).toBeUndefined();
+    const secondCall = firstRespondCall(secondRespond);
+    expect(secondCall?.[0]).toBe(true);
+    expect(secondCall?.[1]?.messageId).toBe("m-reconnect");
+    expect(secondCall?.[3]?.cached).toBe(true);
+  });
+
   it("accepts media-only sends without message", async () => {
     mockDeliverySuccess("m-media");
 
