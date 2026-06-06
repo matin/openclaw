@@ -11,6 +11,7 @@ import {
 } from "../infra/diagnostics-timeline.js";
 import { isOutboundDeliveryError } from "../infra/outbound/deliver-types.js";
 import { logMessageReceived } from "../logging/diagnostic.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { hasOutboundReplyContent } from "../plugin-sdk/reply-payload.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import type { SilentReplyConversationType } from "../shared/silent-reply-policy.js";
@@ -149,10 +150,42 @@ async function shouldCancelForegroundReplyDelivery(
     if (!hasNewerActiveForegroundReplyFenceGeneration(state, snapshot.generation)) {
       return false;
     }
-    await new Promise<void>((resolve) => {
-      state.waiters.add(resolve);
+    // Bounded wait: a newer generation may itself be queued behind THIS
+    // dispatch's session lane slot (the fence generation begins at message
+    // enqueue while the session lane is single-slot), so an unbounded wait
+    // here deadlocks the whole chat: the older reply's delivery waits for the
+    // newer generation to end, and the newer generation's dispatch waits for
+    // the older one's lane slot. Wait briefly to let a genuinely-finishing
+    // newer generation supersede this reply; on timeout, deliver anyway — a
+    // possibly-stale reply beats a permanently deaf chat.
+    const superseded = await new Promise<boolean>((resolve) => {
+      const waiter = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        state.waiters.delete(waiter);
+        resolve(false);
+      }, resolveForegroundReplyFenceWaitMs());
+      timer.unref?.();
+      state.waiters.add(waiter);
     });
+    if (!superseded) {
+      replyFenceLog.warn(
+        `[reply-fence] newer generation still active after ${resolveForegroundReplyFenceWaitMs()}ms (key=${snapshot.key} generation=${snapshot.generation}); delivering anyway to avoid lane deadlock`,
+      );
+      return false;
+    }
   }
+}
+
+const replyFenceLog = createSubsystemLogger("auto-reply/reply-fence");
+
+const DEFAULT_FOREGROUND_REPLY_FENCE_WAIT_MS = 15_000;
+
+function resolveForegroundReplyFenceWaitMs(): number {
+  const raw = Number(process.env.OPENCLAW_REPLY_FENCE_WAIT_MS);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_FOREGROUND_REPLY_FENCE_WAIT_MS;
 }
 
 function markForegroundReplyFenceVisibleDelivery(
