@@ -137,6 +137,66 @@ describe("foreground reply freshness", () => {
     expect(deliveries).toEqual([{ kind: "final", text: "new final" }]);
   });
 
+  it("delivers an older foreground final after the bounded fence wait when the newer generation never settles (lane deadlock)", async () => {
+    // Regression: the fence generation begins at message enqueue while the
+    // session lane is single-slot. A newer inbound that is queued behind the
+    // older dispatch's lane slot never starts, so the older reply's fence
+    // wait could never be released — older delivery waited on newer ending,
+    // newer waited on older's lane: a permanent per-chat deadlock (membrane
+    // outage 2026-06-06). The fence wait must be bounded.
+    vi.stubEnv("OPENCLAW_REPLY_FENCE_WAIT_MS", "50");
+    try {
+      const deliveries: Delivery[] = [];
+      const olderStarted = createDeferred<void>();
+      const releaseOlderFinal = createDeferred<void>();
+      const newerNeverSettles = createDeferred<void>();
+
+      hoisted.dispatchReplyFromConfigMock.mockImplementation(
+        async (params: DispatchReplyFromConfigParams) => {
+          if (params.ctx.MessageSid === "old-message") {
+            olderStarted.resolve();
+            await releaseOlderFinal.promise;
+            params.dispatcher.sendFinalReply({ text: "old final" });
+            return queuedFinalResult();
+          }
+          if (params.ctx.MessageSid === "new-message") {
+            // Models the lane-blocked newer dispatch: fence generation is
+            // already registered, but the dispatch never progresses.
+            await newerNeverSettles.promise;
+            return queuedFinalResult();
+          }
+          throw new Error(`unexpected test message ${params.ctx.MessageSid ?? "<missing>"}`);
+        },
+      );
+
+      const olderDispatch = dispatchWithDeliveries(
+        buildForegroundCtx({ MessageSid: "old-message" }),
+        deliveries,
+      );
+      await olderStarted.promise;
+
+      const newerDispatch = dispatchWithDeliveries(
+        buildForegroundCtx({ MessageSid: "new-message" }),
+        deliveries,
+      );
+
+      releaseOlderFinal.resolve();
+      // Without the bounded fence wait this await never settles.
+      const olderResult = await olderDispatch;
+
+      expect(olderResult).toEqual({
+        queuedFinal: true,
+        counts: { tool: 0, block: 0, final: 1 },
+      });
+      expect(deliveries).toEqual([{ kind: "final", text: "old final" }]);
+
+      newerNeverSettles.resolve();
+      await newerDispatch;
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("keeps an older foreground final when a newer inbound has no visible delivery while beforeDeliver is pending", async () => {
     const deliveries: Delivery[] = [];
     const beforeDeliverStarted = createDeferred<void>();
