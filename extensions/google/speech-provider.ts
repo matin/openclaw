@@ -616,51 +616,42 @@ async function synthesizeGoogleVertexTtsPcmOnce(params: {
     project: resolveGoogleVertexTtsProject(),
     location: resolveGoogleVertexTtsLocation(),
   });
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), params.timeoutMs);
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { ...authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify(
-        buildGoogleSpeechGenerateContentBody({
-          text: params.text,
-          voiceName: params.voiceName,
-          audioProfile: params.audioProfile,
-          speakerName: params.speakerName,
-        }),
-      ),
-      signal: controller.signal,
-    });
-  } catch (err) {
-    // Network/abort failures are retryable; everything else surfaces as-is so
-    // the provider-order fallback trips on a detected failure (ADR 0024 §2).
-    throw new GoogleTtsRetryableError(err instanceof Error ? err.message : String(err));
-  } finally {
-    clearTimeout(timer);
-  }
 
-  if (!res.ok) {
-    let detail = "";
+  // Route through the guarded HTTP helper (SSRF/dispatcher policy, timeout),
+  // not a raw fetch — same path the AI-Studio route uses.
+  const { response: res, release } = await postJsonRequest({
+    url,
+    headers: new Headers({ ...authHeaders, "Content-Type": "application/json" }),
+    body: buildGoogleSpeechGenerateContentBody({
+      text: params.text,
+      voiceName: params.voiceName,
+      audioProfile: params.audioProfile,
+      speakerName: params.speakerName,
+    }),
+    timeoutMs: params.timeoutMs,
+    fetchFn: fetch,
+    pinDns: false,
+  });
+
+  try {
+    if (!res.ok) {
+      try {
+        await assertOkOrThrowProviderError(res, "Google Vertex TTS failed");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (res.status >= 500 && res.status < 600) {
+          throw new GoogleTtsRetryableError(message);
+        }
+        throw err;
+      }
+    }
     try {
-      detail = await res.text();
-    } catch {
-      // Status alone is enough to classify; ignore body-read failures.
+      return extractGoogleSpeechPcm((await res.json()) as GoogleGenerateSpeechResponse);
+    } catch (err) {
+      throw new GoogleTtsRetryableError(err instanceof Error ? err.message : String(err));
     }
-    const message = `Google Vertex TTS failed: ${res.status}${
-      detail ? ` ${detail.slice(0, 500)}` : ""
-    }`;
-    if (res.status >= 500 && res.status < 600) {
-      throw new GoogleTtsRetryableError(message);
-    }
-    throw new Error(message);
-  }
-
-  try {
-    return extractGoogleSpeechPcm((await res.json()) as GoogleGenerateSpeechResponse);
-  } catch (err) {
-    throw new GoogleTtsRetryableError(err instanceof Error ? err.message : String(err));
+  } finally {
+    await release();
   }
 }
 
