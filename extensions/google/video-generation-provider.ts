@@ -48,10 +48,15 @@ async function resolveVertexOAuthToken(): Promise<string> {
       },
     );
     if (res.ok) {
-      const data = (await res.json()) as any;
-      if (data.access_token) return data.access_token;
+      const data = (await res.json()) as { access_token?: string };
+      if (data.access_token) {
+        return data.access_token;
+      }
     }
-  } catch (e) {}
+  } catch {
+    // Metadata-server token unavailable (not on GCE / no default SA); fall
+    // through to the ADC path below.
+  }
   const { resolveGoogleVertexAuthorizedUserHeaders } = await import("./vertex-adc.js");
   const headers = await resolveGoogleVertexAuthorizedUserHeaders(fetch);
   return headers.Authorization.replace(/^Bearer\s+/i, "");
@@ -589,7 +594,9 @@ export function buildGoogleVideoGenerationProvider(): VideoGenerationProvider {
       let usedRestFallback = false;
       let operation;
       try {
-        if (!client) throw new Error("Force rest fallback for Vertex");
+        if (!client) {
+          throw new Error("Force rest fallback for Vertex");
+        }
         operation = await client.models.generateVideos({
           model,
           prompt: req.prompt,

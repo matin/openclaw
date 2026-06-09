@@ -27,6 +27,10 @@ const allowedRawFetchCallsites = new Set([
   bundledPluginCallsite("feishu", "src/monitor.webhook.test-helpers.ts", 25),
   bundledPluginCallsite("github-copilot", "login.ts", 80),
   bundledPluginCallsite("github-copilot", "login.ts", 112),
+  // GCE metadata-server token endpoint (link-local 169.254.169.254) — must be a
+  // raw fetch; the SSRF guard intentionally blocks the metadata IP. Pre-dates
+  // the native-audio-output work; surfaced when that PR first touched the package.
+  bundledPluginCallsite("google", "video-generation-provider.ts", 44),
   bundledPluginCallsite("googlechat", "src/auth.ts", 83),
   bundledPluginCallsite("huggingface", "models.ts", 143),
   bundledPluginCallsite("kilocode", "provider-models.ts", 130),
