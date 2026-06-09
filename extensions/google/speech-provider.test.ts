@@ -680,3 +680,29 @@ describe("Google speech provider", () => {
     expectRecordFields(requestConfig.request, { allowPrivateNetwork: true });
   });
 });
+
+describe("Google Vertex TTS route", () => {
+  it("builds the global aiplatform generateContent URL", () => {
+    expect(
+      testing.buildGoogleVertexTtsUrl({
+        model: "gemini-3.1-flash-tts-preview",
+        project: "casita-mb",
+        location: "global",
+      }),
+    ).toBe(
+      "https://aiplatform.googleapis.com/v1/projects/casita-mb/locations/global/publishers/google/models/gemini-3.1-flash-tts-preview:generateContent",
+    );
+  });
+
+  it("uses a regional host for a non-global location", () => {
+    expect(
+      testing.buildGoogleVertexTtsUrl({
+        model: "gemini-3.1-flash-tts-preview",
+        project: "casita-mb",
+        location: "us-central1",
+      }),
+    ).toBe(
+      "https://us-central1-aiplatform.googleapis.com/v1/projects/casita-mb/locations/us-central1/publishers/google/models/gemini-3.1-flash-tts-preview:generateContent",
+    );
+  });
+});

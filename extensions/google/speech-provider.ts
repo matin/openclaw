@@ -15,6 +15,11 @@ import type {
 import { asObject, trimToUndefined } from "openclaw/plugin-sdk/speech-core";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { resolveGoogleGenerativeAiHttpRequestConfig } from "./api.js";
+import {
+  hasGoogleVertexAuthorizedUserAdcSync,
+  isGoogleVertexCredentialsMarker,
+  resolveGoogleVertexAuthorizedUserHeaders,
+} from "./vertex-adc.js";
 
 const DEFAULT_GOOGLE_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 const DEFAULT_GOOGLE_TTS_VOICE = "Kore";
@@ -286,6 +291,41 @@ function parseDirectiveToken(ctx: SpeechDirectiveTokenParseContext): {
   }
 }
 
+/** The `generateContent` request body shared by the AI-Studio and Vertex ADC routes. */
+function buildGoogleSpeechGenerateContentBody(params: {
+  text: string;
+  voiceName: string;
+  audioProfile?: string;
+  speakerName?: string;
+}): Record<string, unknown> {
+  return {
+    contents: [
+      {
+        role: "user",
+        parts: [
+          {
+            text: composeGoogleTtsText({
+              text: params.text,
+              audioProfile: params.audioProfile,
+              speakerName: params.speakerName,
+            }),
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      responseModalities: ["AUDIO"],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName: params.voiceName,
+          },
+        },
+      },
+    },
+  };
+}
+
 function extractGoogleSpeechPcm(payload: GoogleGenerateSpeechResponse): Buffer {
   for (const candidate of payload.candidates ?? []) {
     for (const part of candidate.content?.parts ?? []) {
@@ -455,32 +495,12 @@ async function synthesizeGoogleTtsPcmOnce(params: {
   const { response: res, release } = await postJsonRequest({
     url: `${baseUrl}/models/${params.model}:generateContent`,
     headers,
-    body: {
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: composeGoogleTtsText({
-                text: params.text,
-                audioProfile: params.audioProfile,
-                speakerName: params.speakerName,
-              }),
-            },
-          ],
-        },
-      ],
-      generationConfig: {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: {
-              voiceName: params.voiceName,
-            },
-          },
-        },
-      },
-    },
+    body: buildGoogleSpeechGenerateContentBody({
+      text: params.text,
+      voiceName: params.voiceName,
+      audioProfile: params.audioProfile,
+      speakerName: params.speakerName,
+    }),
     timeoutMs: params.timeoutMs,
     fetchFn: fetch,
     pinDns: false,
@@ -536,6 +556,198 @@ async function synthesizeGoogleTtsPcm(params: {
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
+// Vertex generateContent is served under the v1 API on the aiplatform host.
+const GOOGLE_VERTEX_TTS_API_VERSION = "v1";
+
+function resolveGoogleVertexTtsProject(): string {
+  const project =
+    normalizeOptionalString(process.env.GOOGLE_CLOUD_PROJECT) ??
+    normalizeOptionalString(process.env.GCLOUD_PROJECT);
+  if (!project) {
+    throw new Error(
+      "Google Vertex TTS requires a project. Set GOOGLE_CLOUD_PROJECT or GCLOUD_PROJECT.",
+    );
+  }
+  return project;
+}
+
+function resolveGoogleVertexTtsLocation(): string {
+  // TTS preview models are served from the global endpoint; honor an explicit
+  // GOOGLE_CLOUD_LOCATION override but default to global rather than a region.
+  return normalizeOptionalString(process.env.GOOGLE_CLOUD_LOCATION) ?? "global";
+}
+
+function buildGoogleVertexTtsUrl(params: {
+  model: string;
+  project: string;
+  location: string;
+}): string {
+  const origin =
+    params.location === "global"
+      ? "https://aiplatform.googleapis.com"
+      : `https://${params.location}-aiplatform.googleapis.com`;
+  return (
+    `${origin}/${GOOGLE_VERTEX_TTS_API_VERSION}` +
+    `/projects/${encodeURIComponent(params.project)}` +
+    `/locations/${encodeURIComponent(params.location)}` +
+    `/publishers/google/models/${encodeURIComponent(params.model)}:generateContent`
+  );
+}
+
+/**
+ * Vertex ADC synthesis route. The deployment runs keyless on Vertex, so there
+ * is no AI-Studio key; we ride the same ADC bearer the rest of the Google
+ * provider uses (`resolveGoogleVertexAuthorizedUserHeaders`). This is the route
+ * that closes the speech-provider Vertex gap (tulgey #10) and makes native
+ * audio output the primary path (ADR 0024). Body, PCM extraction, WAV-wrap, and
+ * opus transcode are shared with the AI-Studio route.
+ */
+async function synthesizeGoogleVertexTtsPcmOnce(params: {
+  text: string;
+  model: string;
+  voiceName: string;
+  audioProfile?: string;
+  speakerName?: string;
+  timeoutMs: number;
+}): Promise<Buffer> {
+  const authHeaders = await resolveGoogleVertexAuthorizedUserHeaders(fetch);
+  const url = buildGoogleVertexTtsUrl({
+    model: params.model,
+    project: resolveGoogleVertexTtsProject(),
+    location: resolveGoogleVertexTtsLocation(),
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), params.timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(
+        buildGoogleSpeechGenerateContentBody({
+          text: params.text,
+          voiceName: params.voiceName,
+          audioProfile: params.audioProfile,
+          speakerName: params.speakerName,
+        }),
+      ),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    // Network/abort failures are retryable; everything else surfaces as-is so
+    // the provider-order fallback trips on a detected failure (ADR 0024 §2).
+    throw new GoogleTtsRetryableError(err instanceof Error ? err.message : String(err));
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!res.ok) {
+    let detail = "";
+    try {
+      detail = await res.text();
+    } catch {
+      // Status alone is enough to classify; ignore body-read failures.
+    }
+    const message = `Google Vertex TTS failed: ${res.status}${
+      detail ? ` ${detail.slice(0, 500)}` : ""
+    }`;
+    if (res.status >= 500 && res.status < 600) {
+      throw new GoogleTtsRetryableError(message);
+    }
+    throw new Error(message);
+  }
+
+  try {
+    return extractGoogleSpeechPcm((await res.json()) as GoogleGenerateSpeechResponse);
+  } catch (err) {
+    throw new GoogleTtsRetryableError(err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function synthesizeGoogleVertexTtsPcm(params: {
+  text: string;
+  model: string;
+  voiceName: string;
+  audioProfile?: string;
+  speakerName?: string;
+  timeoutMs: number;
+}): Promise<Buffer> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await synthesizeGoogleVertexTtsPcmOnce(params);
+    } catch (err) {
+      lastError = err;
+      if (!isGoogleTtsRetryableError(err) || attempt > 0) {
+        throw err;
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+/** True when no AI-Studio key is set but a Vertex ADC source is detectable. */
+function googleVertexTtsAdcAvailable(apiKey: string | undefined): boolean {
+  return isGoogleVertexCredentialsMarker(apiKey) && hasGoogleVertexAuthorizedUserAdcSync();
+}
+
+/**
+ * Resolve speech PCM via the best available Google route.
+ *
+ * Primary stays the AI-Studio key route (unchanged). When no AI-Studio key is
+ * configured but the deployment has Vertex ADC (the keyless-Vertex case,
+ * tulgey #10 / ADR 0024), synthesize natively over the Vertex inference path
+ * instead of failing. With neither, throw so the speech provider-order fallback
+ * (Cloud TTS → text) trips on a detected failure, never a silent degrade
+ * (ADR 0024 §2).
+ */
+async function resolveGoogleTtsPcm(params: {
+  cfg?: OpenClawConfig;
+  providerConfig: SpeechProviderConfig;
+  text: string;
+  model: string;
+  voiceName: string;
+  audioProfile?: string;
+  speakerName?: string;
+  timeoutMs: number;
+}): Promise<Buffer> {
+  const apiKey = resolveGoogleTtsApiKey({
+    cfg: params.cfg,
+    providerConfig: params.providerConfig,
+  });
+  if (apiKey && !isGoogleVertexCredentialsMarker(apiKey)) {
+    return synthesizeGoogleTtsPcm({
+      text: params.text,
+      apiKey,
+      baseUrl: resolveGoogleTtsBaseUrl({
+        cfg: params.cfg,
+        providerConfig: readGoogleTtsProviderConfig(params.providerConfig),
+      }),
+      request: sanitizeConfiguredModelProviderRequest(
+        params.cfg?.models?.providers?.google?.request,
+      ),
+      model: params.model,
+      voiceName: params.voiceName,
+      audioProfile: params.audioProfile,
+      speakerName: params.speakerName,
+      timeoutMs: params.timeoutMs,
+    });
+  }
+  if (googleVertexTtsAdcAvailable(apiKey)) {
+    return synthesizeGoogleVertexTtsPcm({
+      text: params.text,
+      model: params.model,
+      voiceName: params.voiceName,
+      audioProfile: params.audioProfile,
+      speakerName: params.speakerName,
+      timeoutMs: params.timeoutMs,
+    });
+  }
+  throw new Error(
+    "Google TTS unavailable: no AI-Studio API key and no Vertex ADC credentials detected.",
+  );
+}
+
 export function buildGoogleSpeechProvider(): SpeechProviderPlugin {
   return {
     id: "google",
@@ -578,8 +790,14 @@ export function buildGoogleSpeechProvider(): SpeechProviderPlugin {
         : { model: normalizeGoogleTtsModel(params.modelId) }),
     }),
     listVoices: async () => GOOGLE_TTS_VOICES.map((voice) => ({ id: voice, name: voice })),
-    isConfigured: ({ cfg, providerConfig }) =>
-      Boolean(resolveGoogleTtsApiKey({ cfg, providerConfig })),
+    isConfigured: ({ cfg, providerConfig }) => {
+      const apiKey = resolveGoogleTtsApiKey({ cfg, providerConfig });
+      if (apiKey && !isGoogleVertexCredentialsMarker(apiKey)) {
+        return true;
+      }
+      // Keyless Vertex: the native route is available when ADC is present.
+      return hasGoogleVertexAuthorizedUserAdcSync();
+    },
     prepareSynthesis: (ctx) => {
       const config = readGoogleTtsProviderConfig(ctx.providerConfig);
       const shouldWrap =
@@ -599,20 +817,10 @@ export function buildGoogleSpeechProvider(): SpeechProviderPlugin {
     synthesize: async (req) => {
       const config = readGoogleTtsProviderConfig(req.providerConfig);
       const overrides = readGoogleTtsOverrides(req.providerOverrides);
-      const apiKey = resolveGoogleTtsApiKey({
+      const pcm = await resolveGoogleTtsPcm({
         cfg: req.cfg,
         providerConfig: req.providerConfig,
-      });
-      if (!apiKey) {
-        throw new Error("Google API key missing");
-      }
-      const pcm = await synthesizeGoogleTtsPcm({
         text: req.text,
-        apiKey,
-        baseUrl: resolveGoogleTtsBaseUrl({ cfg: req.cfg, providerConfig: config }),
-        request: sanitizeConfiguredModelProviderRequest(
-          req.cfg?.models?.providers?.google?.request,
-        ),
         model: normalizeGoogleTtsModel(overrides.model ?? config.model),
         voiceName: normalizeGoogleTtsVoiceName(overrides.voiceName ?? config.voiceName),
         audioProfile: overrides.audioProfile ?? config.audioProfile,
@@ -642,20 +850,10 @@ export function buildGoogleSpeechProvider(): SpeechProviderPlugin {
     synthesizeTelephony: async (req) => {
       const config = readGoogleTtsProviderConfig(req.providerConfig);
       const overrides = readGoogleTtsOverrides(req.providerOverrides);
-      const apiKey = resolveGoogleTtsApiKey({
+      const pcm = await resolveGoogleTtsPcm({
         cfg: req.cfg,
         providerConfig: req.providerConfig,
-      });
-      if (!apiKey) {
-        throw new Error("Google API key missing");
-      }
-      const pcm = await synthesizeGoogleTtsPcm({
         text: req.text,
-        apiKey,
-        baseUrl: resolveGoogleTtsBaseUrl({ cfg: req.cfg, providerConfig: config }),
-        request: sanitizeConfiguredModelProviderRequest(
-          req.cfg?.models?.providers?.google?.request,
-        ),
         model: normalizeGoogleTtsModel(overrides.model ?? config.model),
         voiceName: normalizeGoogleTtsVoiceName(overrides.voiceName ?? config.voiceName),
         audioProfile: overrides.audioProfile ?? config.audioProfile,
@@ -677,6 +875,8 @@ export const testing = {
   GOOGLE_AUDIO_PROFILE_PROMPT_TEMPLATE,
   GOOGLE_TTS_MODELS,
   GOOGLE_TTS_SAMPLE_RATE,
+  buildGoogleVertexTtsUrl,
+  googleVertexTtsAdcAvailable,
   normalizeGoogleTtsModel,
   renderGoogleAudioProfilePrompt,
   wrapPcm16MonoToWav,
