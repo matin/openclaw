@@ -23,6 +23,10 @@ import {
 
 const DEFAULT_GOOGLE_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 const DEFAULT_GOOGLE_TTS_VOICE = "Kore";
+// The BCP-47 locale the auto-detector emits when it is confident the text is
+// Spanish (issue #251). Team/principal locale; an operator can pin a different
+// locale via `languageCode` or a `[[tts:language=...]]` directive.
+const DEFAULT_GOOGLE_TTS_DETECTED_SPANISH_LANGUAGE = "es-MX";
 const GOOGLE_TTS_SAMPLE_RATE = 24_000;
 const GOOGLE_TTS_CHANNELS = 1;
 const GOOGLE_TTS_BITS_PER_SAMPLE = 16;
@@ -72,6 +76,8 @@ type GoogleTtsProviderConfig = {
   baseUrl?: string;
   model: string;
   voiceName: string;
+  languageCode?: string;
+  detectLanguage?: boolean;
   audioProfile?: string;
   speakerName?: string;
   promptTemplate?: typeof GOOGLE_AUDIO_PROFILE_PROMPT_TEMPLATE;
@@ -81,6 +87,7 @@ type GoogleTtsProviderConfig = {
 type GoogleTtsProviderOverrides = {
   model?: string;
   voiceName?: string;
+  languageCode?: string;
   audioProfile?: string;
   speakerName?: string;
 };
@@ -142,6 +149,40 @@ function normalizeGoogleTtsModel(model: unknown): string {
 
 function normalizeGoogleTtsVoiceName(voiceName: unknown): string {
   return normalizeOptionalString(voiceName) ?? DEFAULT_GOOGLE_TTS_VOICE;
+}
+
+/**
+ * Gemini's `speechConfig.languageCode` takes BCP-47 locales (e.g. `es-MX`),
+ * unlike the SDK's `normalizeLanguageCode` which only accepts bare ISO 639-1.
+ * Validate the BCP-47 shape and canonicalize casing (language lowercase, region
+ * uppercase). Returns undefined for an absent value; throws on a malformed one.
+ */
+function normalizeGoogleTtsLanguageCode(value: unknown): string | undefined {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  if (!/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(trimmed)) {
+    throw new Error(
+      `Invalid Google TTS languageCode: ${trimmed} (expected a BCP-47 code, e.g. es-MX)`,
+    );
+  }
+  const [language, ...subtags] = trimmed.split("-");
+  const canonicalSubtags = subtags.map((part) => (part.length === 2 ? part.toUpperCase() : part));
+  return [language.toLowerCase(), ...canonicalSubtags].join("-");
+}
+
+function asOptionalBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  return undefined;
 }
 
 function normalizeGooglePromptTemplate(
@@ -212,6 +253,8 @@ function normalizeGoogleTtsProviderConfig(
     baseUrl: trimToUndefined(raw?.baseUrl),
     model: normalizeGoogleTtsModel(raw?.model),
     voiceName: normalizeGoogleTtsVoiceName(raw?.voiceName ?? raw?.voice),
+    languageCode: normalizeGoogleTtsLanguageCode(raw?.languageCode ?? raw?.language),
+    detectLanguage: asOptionalBoolean(raw?.detectLanguage),
     audioProfile: trimToUndefined(raw?.audioProfile),
     speakerName: trimToUndefined(raw?.speakerName),
     ...(promptTemplate ? { promptTemplate } : {}),
@@ -231,6 +274,10 @@ function readGoogleTtsProviderConfig(config: SpeechProviderConfig): GoogleTtsPro
     voiceName: normalizeGoogleTtsVoiceName(
       config.voiceName ?? config.voice ?? normalized.voiceName,
     ),
+    languageCode:
+      normalizeGoogleTtsLanguageCode(config.languageCode ?? config.language) ??
+      normalized.languageCode,
+    detectLanguage: asOptionalBoolean(config.detectLanguage) ?? normalized.detectLanguage,
     audioProfile: trimToUndefined(config.audioProfile) ?? normalized.audioProfile,
     speakerName: trimToUndefined(config.speakerName) ?? normalized.speakerName,
     ...(promptTemplate ? { promptTemplate } : {}),
@@ -247,6 +294,7 @@ function readGoogleTtsOverrides(
   return {
     model: normalizeOptionalString(overrides.model),
     voiceName: normalizeOptionalString(overrides.voiceName ?? overrides.voice),
+    languageCode: normalizeGoogleTtsLanguageCode(overrides.languageCode ?? overrides.language),
     audioProfile: normalizeOptionalString(overrides.audioProfile),
     speakerName: normalizeOptionalString(overrides.speakerName),
   };
@@ -286,15 +334,203 @@ function parseDirectiveToken(ctx: SpeechDirectiveTokenParseContext): {
         return { handled: true };
       }
       return { handled: true, overrides: { model: ctx.value } };
+    case "language":
+    case "languagecode":
+    case "language_code":
+    case "google_language":
+      if (!ctx.policy.allowNormalization) {
+        return { handled: true };
+      }
+      return {
+        handled: true,
+        overrides: {
+          ...ctx.currentOverrides,
+          languageCode: normalizeGoogleTtsLanguageCode(ctx.value),
+        },
+      };
     default:
       return { handled: false };
   }
+}
+
+// --- Spanish auto-detection (issue #251) ------------------------------------
+//
+// Without speechConfig.languageCode, Gemini TTS infers the spoken language from
+// the text's *script*: Arabic script -> Persian (correct for Farsi), but Latin
+// script defaults to English, so Latin-script Spanish is read with an English
+// accent. The detector closes that gap for the one ambiguous Latin-script case
+// we hit in practice (Spanish vs English) and abstains on everything else, so
+// non-Latin scripts keep their correct script-based auto-selection and English
+// stays English. It emits a locale only when confident — abstain-on-ambiguity.
+
+const GOOGLE_TTS_SPANISH_STOPWORDS = new Set([
+  "el",
+  "la",
+  "los",
+  "las",
+  "un",
+  "una",
+  "unos",
+  "unas",
+  "de",
+  "del",
+  "que",
+  "qué",
+  "y",
+  "en",
+  "con",
+  "sin",
+  "por",
+  "para",
+  "su",
+  "sus",
+  "lo",
+  "le",
+  "les",
+  "se",
+  "es",
+  "está",
+  "están",
+  "estoy",
+  "soy",
+  "muy",
+  "más",
+  "pero",
+  "como",
+  "cómo",
+  "porque",
+  "cuando",
+  "donde",
+  "dónde",
+  "hola",
+  "gracias",
+  "días",
+  "buenos",
+  "buenas",
+  "ahora",
+  "aquí",
+  "vamos",
+  "vámonos",
+  "hoy",
+  "mañana",
+  "también",
+  "tú",
+  "yo",
+  "él",
+  "ella",
+  "nosotros",
+  "ustedes",
+]);
+
+const GOOGLE_TTS_ENGLISH_STOPWORDS = new Set([
+  "the",
+  "a",
+  "an",
+  "of",
+  "to",
+  "and",
+  "or",
+  "in",
+  "on",
+  "with",
+  "without",
+  "for",
+  "is",
+  "are",
+  "am",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "this",
+  "that",
+  "these",
+  "those",
+  "it",
+  "its",
+  "you",
+  "your",
+  "i",
+  "he",
+  "she",
+  "we",
+  "they",
+  "but",
+  "because",
+  "when",
+  "where",
+  "how",
+  "now",
+  "here",
+  "there",
+  "today",
+  "tomorrow",
+  "hello",
+  "thanks",
+  "very",
+  "more",
+  "also",
+]);
+
+// True when the text contains any non-Latin-script letter. Such scripts already
+// get correct script-based auto-selection from Gemini (Farsi's Arabic script ->
+// Persian), so the detector must abstain and never override them. Latin accents
+// (ñ, á, ü, ...) are Latin script and do not trip this.
+function hasGoogleTtsNonLatinLetter(text: string): boolean {
+  for (const char of text) {
+    if (/\p{L}/u.test(char) && !/\p{Script=Latin}/u.test(char)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Strip the audio-profile-v1 wrapper to its transcript so detection scores the
+ * reply, not the English prompt scaffolding. Returns the text unchanged when it
+ * is not a wrapped prompt. */
+function extractGoogleTtsTranscript(text: string): string {
+  if (!isOpenClawGoogleAudioProfilePrompt(text)) {
+    return text;
+  }
+  const marker = "### TRANSCRIPT\n";
+  const index = text.lastIndexOf(marker);
+  return index >= 0 ? text.slice(index + marker.length) : text;
+}
+
+function detectGoogleTtsLanguageCode(
+  rawText: string,
+  spanishLanguageCode: string = DEFAULT_GOOGLE_TTS_DETECTED_SPANISH_LANGUAGE,
+): string | undefined {
+  const text = extractGoogleTtsTranscript(rawText);
+  if (hasGoogleTtsNonLatinLetter(text)) {
+    return undefined;
+  }
+  // Inverted marks are unambiguous Spanish — English never uses them.
+  if (/[¿¡]/.test(text)) {
+    return spanishLanguageCode;
+  }
+  const tokens = text.toLowerCase().match(/[\p{Script=Latin}]+/gu) ?? [];
+  let spanish = 0;
+  let english = 0;
+  for (const token of tokens) {
+    if (GOOGLE_TTS_SPANISH_STOPWORDS.has(token)) {
+      spanish += 1;
+    } else if (GOOGLE_TTS_ENGLISH_STOPWORDS.has(token)) {
+      english += 1;
+    }
+  }
+  const spanishLetters = /[ñáéíóúü]/i.test(text);
+  const confident =
+    (spanish >= 2 && spanish > english) || (spanish >= 1 && spanish > english && spanishLetters);
+  return confident ? spanishLanguageCode : undefined;
 }
 
 /** The `generateContent` request body shared by the AI-Studio and Vertex ADC routes. */
 function buildGoogleSpeechGenerateContentBody(params: {
   text: string;
   voiceName: string;
+  languageCode?: string;
   audioProfile?: string;
   speakerName?: string;
 }): Record<string, unknown> {
@@ -316,6 +552,9 @@ function buildGoogleSpeechGenerateContentBody(params: {
     generationConfig: {
       responseModalities: ["AUDIO"],
       speechConfig: {
+        // Omit-when-absent: no languageCode preserves Gemini's script-based
+        // auto-selection (the Arabic-script -> Persian path Farsi relies on).
+        ...(params.languageCode ? { languageCode: params.languageCode } : {}),
         voiceConfig: {
           prebuiltVoiceConfig: {
             voiceName: params.voiceName,
@@ -479,6 +718,7 @@ async function synthesizeGoogleTtsPcmOnce(params: {
   request?: ReturnType<typeof sanitizeConfiguredModelProviderRequest>;
   model: string;
   voiceName: string;
+  languageCode?: string;
   audioProfile?: string;
   speakerName?: string;
   timeoutMs: number;
@@ -498,6 +738,7 @@ async function synthesizeGoogleTtsPcmOnce(params: {
     body: buildGoogleSpeechGenerateContentBody({
       text: params.text,
       voiceName: params.voiceName,
+      languageCode: params.languageCode,
       audioProfile: params.audioProfile,
       speakerName: params.speakerName,
     }),
@@ -538,6 +779,7 @@ async function synthesizeGoogleTtsPcm(params: {
   request?: ReturnType<typeof sanitizeConfiguredModelProviderRequest>;
   model: string;
   voiceName: string;
+  languageCode?: string;
   audioProfile?: string;
   speakerName?: string;
   timeoutMs: number;
@@ -606,6 +848,7 @@ async function synthesizeGoogleVertexTtsPcmOnce(params: {
   text: string;
   model: string;
   voiceName: string;
+  languageCode?: string;
   audioProfile?: string;
   speakerName?: string;
   timeoutMs: number;
@@ -625,6 +868,7 @@ async function synthesizeGoogleVertexTtsPcmOnce(params: {
     body: buildGoogleSpeechGenerateContentBody({
       text: params.text,
       voiceName: params.voiceName,
+      languageCode: params.languageCode,
       audioProfile: params.audioProfile,
       speakerName: params.speakerName,
     }),
@@ -659,6 +903,7 @@ async function synthesizeGoogleVertexTtsPcm(params: {
   text: string;
   model: string;
   voiceName: string;
+  languageCode?: string;
   audioProfile?: string;
   speakerName?: string;
   timeoutMs: number;
@@ -698,6 +943,7 @@ async function resolveGoogleTtsPcm(params: {
   text: string;
   model: string;
   voiceName: string;
+  languageCode?: string;
   audioProfile?: string;
   speakerName?: string;
   timeoutMs: number;
@@ -719,6 +965,7 @@ async function resolveGoogleTtsPcm(params: {
       ),
       model: params.model,
       voiceName: params.voiceName,
+      languageCode: params.languageCode,
       audioProfile: params.audioProfile,
       speakerName: params.speakerName,
       timeoutMs: params.timeoutMs,
@@ -729,6 +976,7 @@ async function resolveGoogleTtsPcm(params: {
       text: params.text,
       model: params.model,
       voiceName: params.voiceName,
+      languageCode: params.languageCode,
       audioProfile: params.audioProfile,
       speakerName: params.speakerName,
       timeoutMs: params.timeoutMs,
@@ -737,6 +985,27 @@ async function resolveGoogleTtsPcm(params: {
   throw new Error(
     "Google TTS unavailable: no AI-Studio API key and no Vertex ADC credentials detected.",
   );
+}
+
+/**
+ * Resolve the BCP-47 languageCode for a synthesis, by precedence:
+ * directive/talk override > operator config > auto-detection > omit (#251).
+ * Auto-detection abstains unless it is confident the text is Spanish, so Farsi
+ * and English keep Gemini's script-based auto-selection.
+ */
+function resolveGoogleTtsLanguageCode(params: {
+  text: string;
+  config: GoogleTtsProviderConfig;
+  overrides: GoogleTtsProviderOverrides;
+}): string | undefined {
+  const explicit = params.overrides.languageCode ?? params.config.languageCode;
+  if (explicit) {
+    return explicit;
+  }
+  if (params.config.detectLanguage === false) {
+    return undefined;
+  }
+  return detectGoogleTtsLanguageCode(params.text);
 }
 
 export function buildGoogleSpeechProvider(): SpeechProviderPlugin {
@@ -814,6 +1083,7 @@ export function buildGoogleSpeechProvider(): SpeechProviderPlugin {
         text: req.text,
         model: normalizeGoogleTtsModel(overrides.model ?? config.model),
         voiceName: normalizeGoogleTtsVoiceName(overrides.voiceName ?? config.voiceName),
+        languageCode: resolveGoogleTtsLanguageCode({ text: req.text, config, overrides }),
         audioProfile: overrides.audioProfile ?? config.audioProfile,
         speakerName: overrides.speakerName ?? config.speakerName,
         timeoutMs: req.timeoutMs,
@@ -847,6 +1117,7 @@ export function buildGoogleSpeechProvider(): SpeechProviderPlugin {
         text: req.text,
         model: normalizeGoogleTtsModel(overrides.model ?? config.model),
         voiceName: normalizeGoogleTtsVoiceName(overrides.voiceName ?? config.voiceName),
+        languageCode: resolveGoogleTtsLanguageCode({ text: req.text, config, overrides }),
         audioProfile: overrides.audioProfile ?? config.audioProfile,
         speakerName: overrides.speakerName ?? config.speakerName,
         timeoutMs: req.timeoutMs,
@@ -863,13 +1134,17 @@ export function buildGoogleSpeechProvider(): SpeechProviderPlugin {
 export const testing = {
   DEFAULT_GOOGLE_TTS_MODEL,
   DEFAULT_GOOGLE_TTS_VOICE,
+  DEFAULT_GOOGLE_TTS_DETECTED_SPANISH_LANGUAGE,
   GOOGLE_AUDIO_PROFILE_PROMPT_TEMPLATE,
   GOOGLE_TTS_MODELS,
   GOOGLE_TTS_SAMPLE_RATE,
   buildGoogleVertexTtsUrl,
+  detectGoogleTtsLanguageCode,
   googleVertexTtsAdcAvailable,
+  normalizeGoogleTtsLanguageCode,
   normalizeGoogleTtsModel,
   renderGoogleAudioProfilePrompt,
+  resolveGoogleTtsLanguageCode,
   wrapPcm16MonoToWav,
 };
 export { testing as __testing };

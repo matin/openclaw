@@ -706,3 +706,200 @@ describe("Google Vertex TTS route", () => {
     );
   });
 });
+
+describe("Google TTS language detection (#251)", () => {
+  // Persian (Arabic script) — sound the Farsi non-regression alarm if touched.
+  const FARSI = "سلام دنیا";
+  const SPANISH = "Hola, hoy es un día perfecto para entrenar en la montaña.";
+  const ENGLISH = "The weather is perfect for a run in the mountains today.";
+
+  it("detects confident Spanish as es-MX", () => {
+    expect(testing.detectGoogleTtsLanguageCode(SPANISH)).toBe("es-MX");
+  });
+
+  it("treats inverted punctuation as unambiguous Spanish", () => {
+    expect(testing.detectGoogleTtsLanguageCode("¿Cómo estás?")).toBe("es-MX");
+  });
+
+  it("abstains on English so it keeps the default voice", () => {
+    expect(testing.detectGoogleTtsLanguageCode(ENGLISH)).toBeUndefined();
+  });
+
+  it("abstains on non-Latin scripts so Farsi keeps its Persian voice", () => {
+    expect(testing.detectGoogleTtsLanguageCode(FARSI)).toBeUndefined();
+  });
+
+  it("abstains on English carrying a lone Spanish loanword", () => {
+    expect(
+      testing.detectGoogleTtsLanguageCode("I ordered a jalapeño burrito and a soda."),
+    ).toBeUndefined();
+  });
+
+  it("abstains on empty text", () => {
+    expect(testing.detectGoogleTtsLanguageCode("")).toBeUndefined();
+  });
+
+  it("scores the transcript, not the English audio-profile scaffolding", () => {
+    const wrapped = testing.renderGoogleAudioProfilePrompt({
+      text: SPANISH,
+      persona: { id: "membrane", label: "Membrane", prompt: { profile: "A warm assistant." } },
+    });
+    // The wrapper prose is English; detection must still see the Spanish transcript.
+    expect(wrapped).toContain("Synthesize speech from the TRANSCRIPT section only.");
+    expect(testing.detectGoogleTtsLanguageCode(wrapped)).toBe("es-MX");
+  });
+
+  it("normalizes BCP-47 casing and rejects malformed codes", () => {
+    expect(testing.normalizeGoogleTtsLanguageCode("es-mx")).toBe("es-MX");
+    expect(testing.normalizeGoogleTtsLanguageCode("EN-us")).toBe("en-US");
+    expect(testing.normalizeGoogleTtsLanguageCode("ES")).toBe("es");
+    expect(testing.normalizeGoogleTtsLanguageCode(undefined)).toBeUndefined();
+    expect(() => testing.normalizeGoogleTtsLanguageCode("not a code!")).toThrow();
+  });
+
+  it("resolves languageCode by precedence: override > config > detect", () => {
+    expect(
+      testing.resolveGoogleTtsLanguageCode({
+        text: SPANISH,
+        config: { model: "m", voiceName: "Kore", languageCode: "es-ES" },
+        overrides: { languageCode: "en-US" },
+      }),
+    ).toBe("en-US");
+    expect(
+      testing.resolveGoogleTtsLanguageCode({
+        text: SPANISH,
+        config: { model: "m", voiceName: "Kore", languageCode: "es-ES" },
+        overrides: {},
+      }),
+    ).toBe("es-ES");
+    expect(
+      testing.resolveGoogleTtsLanguageCode({
+        text: SPANISH,
+        config: { model: "m", voiceName: "Kore" },
+        overrides: {},
+      }),
+    ).toBe("es-MX");
+    expect(
+      testing.resolveGoogleTtsLanguageCode({
+        text: SPANISH,
+        config: { model: "m", voiceName: "Kore", detectLanguage: false },
+        overrides: {},
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("Google TTS speechConfig.languageCode wiring (#251)", () => {
+  function speechConfigFromFirstRequest(mock: ReturnType<typeof vi.fn>): Record<string, unknown> {
+    const request = requireFirstRecordArg(mock, "Google TTS request") as {
+      body?: { generationConfig?: { speechConfig?: Record<string, unknown> } };
+    };
+    const speechConfig = request.body?.generationConfig?.speechConfig;
+    if (!speechConfig) {
+      throw new Error("Expected speechConfig in request body");
+    }
+    return speechConfig;
+  }
+
+  it("emits languageCode for auto-detected Spanish", async () => {
+    const requestMock = installGoogleTtsRequestMock();
+    const provider = buildGoogleSpeechProvider();
+
+    await provider.synthesize({
+      text: "Hola, hoy es un día perfecto para correr en la montaña.",
+      cfg: {},
+      providerConfig: { apiKey: "google-test-key" },
+      target: "audio-file",
+      timeoutMs: 10_000,
+    });
+
+    expect(speechConfigFromFirstRequest(requestMock).languageCode).toBe("es-MX");
+  });
+
+  it("omits languageCode for Farsi so the Persian voice is preserved", async () => {
+    const requestMock = installGoogleTtsRequestMock();
+    const provider = buildGoogleSpeechProvider();
+
+    await provider.synthesize({
+      text: "سلام ماتین", // "salaam Matin"
+      cfg: {},
+      providerConfig: { apiKey: "google-test-key" },
+      target: "voice-note",
+      timeoutMs: 10_000,
+    });
+
+    expect(speechConfigFromFirstRequest(requestMock)).not.toHaveProperty("languageCode");
+  });
+
+  it("omits languageCode for English", async () => {
+    const requestMock = installGoogleTtsRequestMock();
+    const provider = buildGoogleSpeechProvider();
+
+    await provider.synthesize({
+      text: "The door is open and the lights are on.",
+      cfg: {},
+      providerConfig: { apiKey: "google-test-key" },
+      target: "audio-file",
+      timeoutMs: 10_000,
+    });
+
+    expect(speechConfigFromFirstRequest(requestMock)).not.toHaveProperty("languageCode");
+  });
+
+  it("lets explicit config languageCode override detection", async () => {
+    const requestMock = installGoogleTtsRequestMock();
+    const provider = buildGoogleSpeechProvider();
+
+    await provider.synthesize({
+      text: "Hola, hoy es un día perfecto para correr.",
+      cfg: {},
+      providerConfig: { apiKey: "google-test-key", languageCode: "es-es" },
+      target: "audio-file",
+      timeoutMs: 10_000,
+    });
+
+    expect(speechConfigFromFirstRequest(requestMock).languageCode).toBe("es-ES");
+  });
+
+  it("disables detection when detectLanguage is false", async () => {
+    const requestMock = installGoogleTtsRequestMock();
+    const provider = buildGoogleSpeechProvider();
+
+    await provider.synthesize({
+      text: "Hola, hoy es un día perfecto para correr en la montaña.",
+      cfg: {},
+      providerConfig: { apiKey: "google-test-key", detectLanguage: false },
+      target: "audio-file",
+      timeoutMs: 10_000,
+    });
+
+    expect(speechConfigFromFirstRequest(requestMock)).not.toHaveProperty("languageCode");
+  });
+
+  it("parses a [[tts:language=...]] directive into a normalized override", () => {
+    const provider = buildGoogleSpeechProvider();
+    const policy = {
+      enabled: true,
+      allowText: true,
+      allowProvider: true,
+      allowVoice: true,
+      allowModelId: true,
+      allowVoiceSettings: true,
+      allowNormalization: true,
+      allowSeed: true,
+    };
+
+    expect(provider.parseDirectiveToken?.({ key: "language", value: "es-mx", policy })).toEqual({
+      handled: true,
+      overrides: { languageCode: "es-MX" },
+    });
+
+    expect(
+      provider.parseDirectiveToken?.({
+        key: "language",
+        value: "es-mx",
+        policy: { ...policy, allowNormalization: false },
+      }),
+    ).toEqual({ handled: true });
+  });
+});
